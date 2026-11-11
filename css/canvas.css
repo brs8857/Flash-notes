@@ -1,0 +1,251 @@
+/* Flash Notes — drawing engine styles (Builder A). Everything is prefixed cv-. Uses css/tokens.css. */
+
+.cv-root {
+  position: relative;
+  overflow: hidden;
+  background: var(--desk, #E6E3DD);
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: crosshair;
+}
+.cv-root[data-mode="board"] { background: #FFFFFF; }
+.cv-root[data-mode="board"][data-paper="cream"] { background: #FBF6E9; }
+.cv-root[data-mode="board"][data-paper="dark"] { background: #1E1F24; }
+.cv-root[data-tool="hand"], .cv-root.cv-space { cursor: grab; }
+.cv-root.cv-panning { cursor: grabbing; }
+.cv-root[data-tool="text"] { cursor: text; }
+.cv-root[data-tool="lasso"] { cursor: default; }
+.cv-root[data-tool="eraser"] { cursor: none; }
+.cv-root [hidden] { display: none !important; }
+
+.cv-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform-origin: 0 0;
+  touch-action: none;
+}
+/* Live highlighter ink blends like the committed one (which sits beneath pen ink). */
+.cv-live--multiply { mix-blend-mode: multiply; }
+
+.cv-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font-ui, system-ui, sans-serif);
+}
+.cv-overlay > * { position: absolute; left: 0; top: 0; }
+
+/* ---- Eraser cursor -------------------------------------------------------------------------- */
+.cv-eraser {
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid rgba(60, 60, 67, 0.5);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 2px 8px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  will-change: transform;
+}
+.cv-eraser--down { background: rgba(255, 255, 255, 0.5); border-color: rgba(60, 60, 67, 0.7); }
+
+/* ---- Selection ------------------------------------------------------------------------------- */
+.cv-sel { pointer-events: none; will-change: transform; }
+.cv-sel svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.cv-sel rect {
+  fill: var(--accent-soft, rgba(76, 110, 245, 0.14));
+  fill-opacity: 0.45;
+  stroke: var(--accent, #4C6EF5);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-dasharray: 6 6;
+  animation: cv-march 0.8s linear infinite;
+}
+.cv-sel--drag rect { fill-opacity: 0.2; animation-play-state: paused; }
+@keyframes cv-march { to { stroke-dashoffset: -12; } }
+
+/* Handles: 44×44 hit area, small visual knob. Positioned by their centre. */
+.cv-handle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  touch-action: none;
+}
+.cv-handle::after {
+  content: "";
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 3px solid var(--accent, #4C6EF5);
+  box-shadow: 0 2px 8px rgba(20, 20, 30, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  transition: transform var(--dur-fast, 180ms) var(--spring, ease-out);
+}
+.cv-handle:active::after { transform: scale(1.3); }
+.cv-handle--resize { cursor: nwse-resize; }
+
+/* ---- Context menu (glass pill) --------------------------------------------------------------- */
+.cv-menu {
+  display: flex;
+  align-items: stretch;
+  height: 44px;
+  padding: 0 3px;
+  pointer-events: auto;
+  white-space: nowrap;
+  color: var(--text, #1C1C1E);
+  font: 500 15px/1 var(--font-ui, system-ui, sans-serif);
+  letter-spacing: -0.01em;
+  background: var(--glass-strong, rgba(255, 255, 255, 0.86));
+  -webkit-backdrop-filter: var(--glass-blur, blur(24px) saturate(180%));
+  backdrop-filter: var(--glass-blur, blur(24px) saturate(180%));
+  border: 0.5px solid var(--glass-border, rgba(255, 255, 255, 0.6));
+  border-radius: 15px;
+  box-shadow: var(--shadow-3, 0 18px 40px rgba(20, 20, 30, 0.14)), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  transform-origin: 50% 100%;
+  transition: opacity var(--dur-fast, 180ms) ease, transform var(--dur, 280ms) var(--spring, ease-out);
+}
+@supports (corner-shape: squircle) {
+  .cv-menu { border-radius: 20px; corner-shape: squircle; }
+}
+.cv-menu.cv-pop { animation: cv-pop var(--dur, 280ms) var(--spring, ease-out) both; }
+.cv-menu.cv-out { opacity: 0; transform: scale(0.86) translateY(8px); pointer-events: none; }
+@keyframes cv-pop {
+  from { opacity: 0; transform: scale(0.8) translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.cv-menu-btn, .cv-swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.cv-menu-btn {
+  min-width: 44px;
+  padding: 0 15px;
+  border-radius: 11px;
+  transition: background-color var(--dur-fast, 180ms) ease, transform var(--dur-fast, 180ms) var(--spring, ease-out);
+}
+.cv-menu-btn + .cv-menu-btn::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 13px;
+  bottom: 13px;
+  width: 0.5px;
+  background: var(--separator, rgba(60, 60, 67, 0.14));
+}
+.cv-menu-btn:active { background: var(--fill, rgba(120, 120, 128, 0.12)); transform: scale(0.94); }
+@media (hover: hover) { .cv-menu-btn:hover { background: var(--fill, rgba(120, 120, 128, 0.12)); } }
+.cv-menu-btn:focus-visible, .cv-swatch:focus-visible { outline: 2px solid var(--accent, #4C6EF5); outline-offset: -2px; }
+.cv-menu-danger { color: var(--danger, #FA5252); }
+.cv-menu-done { color: var(--success, #40C057); }
+.cv-menu-more { padding-right: 26px; }
+.cv-menu-more::after, .cv-menu-back::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 1.75px 1.75px 0 0;
+  opacity: 0.55;
+}
+.cv-menu-more::after { right: 13px; transform: translateY(-50%) rotate(45deg); }
+.cv-menu-back { min-width: 40px; padding: 0; }
+.cv-menu-back::after { left: 17px; transform: translateY(-50%) rotate(-135deg); }
+.cv-menu--colors { padding-right: 8px; }
+.cv-swatch { width: 38px; padding: 0; }
+.cv-swatch::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: var(--cv-swatch, #000);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: transform var(--dur-fast, 180ms) var(--spring, ease-out);
+}
+.cv-swatch:active::after { transform: scale(0.84); }
+
+/* ---- Text editing ---------------------------------------------------------------------------- */
+.cv-text-edit { transform-origin: 0 0; pointer-events: auto; }
+.cv-textarea {
+  display: block;
+  box-sizing: content-box;
+  width: 100%;
+  min-height: 1.35em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-height: 1.35;
+  font-size: 20px; /* always ≥16px: the wrapper is CSS-scaled instead (iOS focus zoom) */
+  font-weight: 400;
+  letter-spacing: normal;
+  text-align: left;
+  caret-color: var(--accent, #4C6EF5);
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  cursor: text;
+}
+.cv-textarea::placeholder { color: var(--text-3, rgba(60, 60, 67, 0.45)); opacity: 1; }
+.cv-root[data-paper="dark"] .cv-textarea::placeholder { color: rgba(235, 235, 245, 0.4); }
+.cv-text-frame {
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent, #4C6EF5);
+  border-radius: 10px;
+  box-shadow: 0 0 0 4px var(--accent-soft, rgba(76, 110, 245, 0.14));
+  pointer-events: none;
+  animation: cv-frame-in var(--dur, 280ms) var(--spring-soft, ease-out) both;
+}
+@keyframes cv-frame-in { from { opacity: 0; } to { opacity: 1; } }
+.cv-handle--move { left: 50%; top: -19px; cursor: move; }
+.cv-handle--move::after {
+  width: 40px;
+  height: 18px;
+  border-radius: 9px;
+  border: 0;
+  background:
+    radial-gradient(circle, #FFFFFF 1.6px, transparent 2px) 50% 50% / 8px 18px repeat-x content-box,
+    var(--accent, #4C6EF5);
+  padding: 0 8px;
+}
+.cv-handle--width { left: 100%; top: 50%; cursor: ew-resize; }
+.cv-handle--width::after { width: 10px; height: 30px; border-radius: 5px; border-width: 2.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-sel rect { animation: none; }
+  .cv-menu.cv-pop, .cv-text-frame { animation: none; }
+}

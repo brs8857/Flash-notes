@@ -1,0 +1,20 @@
+[
+  "css/canvas.css",
+  "js/canvas/constants.js",
+  "js/canvas/draw.js",
+  "js/canvas/engine.js",
+  "js/canvas/eraser.js",
+  "js/canvas/geom.js",
+  "js/canvas/history.js",
+  "js/canvas/images.js",
+  "js/canvas/input.js",
+  "js/canvas/items.js",
+  "js/canvas/paper.js",
+  "js/canvas/render.js",
+  "js/canvas/selection.js",
+  "js/canvas/strokes.js",
+  "js/canvas/text.js",
+  "js/canvas/textedit.js",
+  "js/canvas/viewport.js",
+  "vendor/perfect-freehand.js"
+]

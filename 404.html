@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flash Notes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // GitHub Pages serves this for unknown paths: send everyone back to the app root.
+  (function () {
+    var parts = location.pathname.split('/');
+    var base = location.hostname.endsWith('github.io') && parts.length > 1 ? '/' + parts[1] + '/' : '/';
+    location.replace(base);
+  })();
+</script>
+<meta http-equiv="refresh" content="1; url=./">
+</head>
+<body style="font-family:-apple-system,system-ui,sans-serif;padding:40px;text-align:center">
+<p>Taking you back to <a href="./">Flash Notes</a>…</p>
+</body>
+</html>

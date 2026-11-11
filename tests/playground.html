@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Flash Notes — engine playground</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/canvas.css">
+<style>
+  html, body { margin: 0; height: 100%; touch-action: manipulation; overscroll-behavior: none; }
+  body { position: fixed; inset: 0; font: 14px/1.2 var(--font-ui); color: var(--text); background: var(--bg);
+         -webkit-user-select: none; user-select: none; }
+  #stage { position: fixed; inset: 0; }
+  #bar { position: fixed; z-index: 2; top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px 10px;
+         align-items: center; padding: 8px 10px; border-radius: 18px; background: var(--glass);
+         -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+         border: 0.5px solid var(--glass-border); box-shadow: var(--shadow-2); }
+  #bar .grp { display: flex; gap: 4px; align-items: center; }
+  #bar button, #bar select { font: 500 14px var(--font-ui); min-height: 36px; padding: 0 10px; border: 0;
+         border-radius: 10px; background: var(--fill); color: var(--text); }
+  #bar select { font-size: 16px; }
+  #bar button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+  #bar .sw { width: 26px; min-height: 26px; height: 26px; padding: 0; border-radius: 50%;
+         box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+  #bar .sw[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #status { position: fixed; z-index: 2; left: 12px; bottom: 10px; padding: 6px 10px; border-radius: 10px;
+         background: var(--glass); font: 12px var(--font-mono); pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="bar">
+  <div class="grp" id="modes">
+    <button data-mode="page">Page</button><button data-mode="board">Board</button>
+  </div>
+  <div class="grp" id="tools">
+    <button data-tool="pen">Pen</button><button data-tool="highlighter">Highlighter</button>
+    <button data-tool="eraser">Eraser</button><button data-tool="lasso">Lasso</button>
+    <button data-tool="text">Text</button><button data-tool="hand">Hand</button>
+  </div>
+  <div class="grp" id="colors"></div>
+  <div class="grp" id="sizes"></div>
+  <div class="grp">
+    <button id="erase-mode">Erase: stroke</button>
+    <button id="undo" disabled>Undo</button><button id="redo" disabled>Redo</button>
+  </div>
+  <div class="grp">
+    <button id="zout" aria-label="Zoom out">−</button><button id="zfit">100%</button><button id="zin" aria-label="Zoom in">+</button>
+  </div>
+  <div class="grp">
+    <select id="paper-style" aria-label="Paper style"></select>
+    <select id="paper-color" aria-label="Paper colour"></select>
+    <select id="board-bg" aria-label="Board background"></select>
+    <select id="font" aria-label="Font"><option>sans</option><option>serif</option><option>mono</option><option>round</option></select>
+  </div>
+  <div class="grp">
+    <button id="add-image">Image</button><button id="add-text">Text box</button>
+    <button id="pencil-only" aria-pressed="false">Pencil only</button>
+    <button id="thumb">Thumb</button>
+  </div>
+</div>
+<div id="status">…</div>
+
+<script type="module">
+import { CanvasView, renderPageToCanvas, renderBoardToCanvas, makeThumbnail } from '../js/canvas/engine.js';
+import * as C from '../js/canvas/constants.js';
+
+const $ = (s) => document.querySelector(s);
+const stage = $('#stage'), bar = $('#bar'), status = $('#status');
+const params = new URLSearchParams(location.search);
+const pages = {
+  page: { id: 'pg-page', paper: { style: params.get('style') || 'lined', color: params.get('color') || 'white' }, items: [] },
+  board: { id: 'pg-board', paper: { style: 'blank', color: params.get('color') || 'white' }, items: [] },
+};
+let mode = params.get('mode') === 'board' ? 'board' : 'page';
+let view = null;
+const log = { changes: 0, lastReason: '', pencil: false, views: 0 };
+
+function mount() {
+  if (view) { pages[view.mode].items = view.getItems(); view.destroy(); }
+  view = new CanvasView(stage, {
+    mode, page: pages[mode], background: $('#board-bg').value || 'dots',
+    onChange: (m) => { log.changes++; log.lastReason = m.reason; log.lastPageId = m.pageId; refresh(); },
+    onViewChange: () => { log.views++; refresh(); },
+    onHistory: (h) => { $('#undo').disabled = !h.canUndo; $('#redo').disabled = !h.canRedo; },
+    onPencilDetected: () => { log.pencil = true; refresh(); },
+    onToolRequest: (t) => setTool(t),
+  });
+  view.setInsets({ top: bar.getBoundingClientRect().bottom + 4, right: 0, bottom: 0, left: 0 });
+  window.view = view;
+  setTool(tool);
+  refresh();
+}
+
+let tool = 'pen';
+function setTool(t) {
+  tool = t;
+  view.setTool(t);
+  for (const b of document.querySelectorAll('#tools button')) b.setAttribute('aria-pressed', b.dataset.tool === t);
+  buildOptions();
+}
+function buildOptions() {
+  const colors = tool === 'highlighter' ? C.HIGHLIGHT_COLORS : C.INK_COLORS;
+  const sizes = C.SIZES[tool] || [];
+  $('#colors').replaceChildren(...(tool === 'eraser' || tool === 'hand' || tool === 'lasso' ? [] : colors.map((c) => {
+    const b = document.createElement('button');
+    b.className = 'sw'; b.style.background = c; b.setAttribute('aria-label', c);
+    b.onclick = () => { view.setToolOptions(tool, { color: c }); };
+    return b;
+  })));
+  $('#sizes').replaceChildren(...sizes.map((s) => {
+    const b = document.createElement('button');
+    b.textContent = s;
+    b.onclick = () => view.setToolOptions(tool, { size: s });
+    return b;
+  }));
+}
+function refresh() {
+  if (!view) return;
+  const v = view.getView();
+  $('#zfit').textContent = Math.round(view.getZoom() * 100) + '%';
+  status.textContent = `${mode} · zoom ${Math.round(v.zoom * 100)}% · x ${v.x.toFixed(0)} y ${v.y.toFixed(0)} · changes ${log.changes} (${log.lastReason}) · pencil ${log.pencil}`;
+  for (const b of document.querySelectorAll('#modes button')) b.setAttribute('aria-pressed', b.dataset.mode === mode);
+  $('#paper-style').hidden = mode !== 'page';
+  $('#board-bg').hidden = mode !== 'board';
+}
+
+for (const s of C.PAPER_STYLES) $('#paper-style').add(new Option(s, s, false, s === pages.page.paper.style));
+for (const c of Object.keys(C.PAPER_COLORS)) $('#paper-color').add(new Option(c, c, false, c === pages[mode].paper.color));
+for (const b of C.BOARD_BACKGROUNDS) $('#board-bg').add(new Option(b, b, false, b === (params.get('bg') || 'dots')));
+
+$('#modes').onclick = (e) => { const m = e.target.dataset.mode; if (m && m !== mode) { mode = m; mount(); } };
+$('#tools').onclick = (e) => { if (e.target.dataset.tool) setTool(e.target.dataset.tool); };
+$('#undo').onclick = () => view.undo();
+$('#redo').onclick = () => view.redo();
+$('#zin').onclick = () => view.zoomBy(1.25);
+$('#zout').onclick = () => view.zoomBy(0.8);
+$('#zfit').onclick = () => view.resetView();
+let eraseMode = 'stroke';
+$('#erase-mode').onclick = (e) => {
+  eraseMode = eraseMode === 'stroke' ? 'area' : 'stroke';
+  view.setToolOptions('eraser', { eraseMode });
+  e.target.textContent = 'Erase: ' + (eraseMode === 'area' ? 'precise' : 'stroke');
+};
+$('#paper-style').onchange = (e) => { pages.page.paper.style = e.target.value; view.setPaper(pages[mode].paper); };
+$('#paper-color').onchange = (e) => { pages[mode].paper.color = e.target.value; view.setPaper(pages[mode].paper); };
+$('#board-bg').onchange = (e) => view.setBackground(e.target.value);
+$('#font').onchange = (e) => view.setToolOptions('text', { font: e.target.value });
+$('#add-text').onclick = () => view.insertText();
+$('#pencil-only').onclick = (e) => {
+  const on = e.target.getAttribute('aria-pressed') !== 'true';
+  e.target.setAttribute('aria-pressed', on);
+  view.setPencilOnly(on);
+};
+$('#add-image').onclick = () => {
+  // A generated test card, so the playground needs no network or file picker.
+  const c = document.createElement('canvas');
+  c.width = 640; c.height = 400;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 640, 400);
+  grad.addColorStop(0, '#4C6EF5'); grad.addColorStop(1, '#F06595');
+  g.fillStyle = grad; g.fillRect(0, 0, 640, 400);
+  g.fillStyle = '#fff'; g.font = '600 56px system-ui'; g.textAlign = 'center';
+  g.fillText('Test image', 320, 215);
+  view.insertImage(c.toDataURL('image/jpeg', 0.85), 640, 400);
+};
+$('#thumb').onclick = async () => {
+  const url = await makeThumbnail({ ...pages[mode], items: view.getItems() }, mode === 'page' ? 'notebook' : 'whiteboard');
+  const w = window.open('');
+  if (w) w.document.body.innerHTML = `<img src="${url}" style="box-shadow:0 2px 12px #0003">`;
+};
+new ResizeObserver(() => view && view.setInsets({ top: bar.getBoundingClientRect().bottom + 4, right: 0, bottom: 0, left: 0 })).observe(bar);
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+// Handles for automated tests.
+window.pg = { C, CanvasView, renderPageToCanvas, renderBoardToCanvas, makeThumbnail, pages, log, mount, setTool,
+  setMode: (m) => { mode = m; mount(); } };
+mount();
+window.pgReady = true;
+</script>
+</body>
+</html>
