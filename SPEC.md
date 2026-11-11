@@ -5,7 +5,7 @@ in section 4 without writing the change into this file under "Contract changes" 
 
 ## 1. Constraints
 - **Static site, no build step, no backend.** Plain HTML + CSS + native ES modules (`<script type="module">`).
-  Served from GitHub Pages under a sub-path (`https://brs8857.github.io/flash-notes/`), so **every URL
+  Served from GitHub Pages under a sub-path (`https://brs8857.github.io/Flash-notes/`), so **every URL
   must be relative** (`./js/app.js`, never `/js/app.js`).
 - **No npm runtime deps.** The only third-party code is `vendor/perfect-freehand.js`
   (ESM; `import { getStroke } from '../../vendor/perfect-freehand.js'`). Do not edit it.

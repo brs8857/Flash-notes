@@ -3,7 +3,7 @@
 A free handwriting notes app for students. It runs in the browser, installs on an iPad home screen like a
 real app, works offline, and has no limits, accounts or ads.
 
-**Open it:** https://brs8857.github.io/flash-notes/
+**Open it:** https://brs8857.github.io/Flash-notes/
 
 ## What it does
 
