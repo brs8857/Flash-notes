@@ -45,7 +45,12 @@ export async function mountLibrary(root, app, opts = {}) {
   let destroyed = false;
 
   const subtitle = h('div', { class: 'lib-subtitle' }, ' ');
-  const gear = h('button', { class: 'icon-btn icon-btn--fill lib-gear', type: 'button', 'aria-label': 'Settings', onClick: () => openSettings(app, { onDataChanged: refresh }) }, icon('gear', 22, 1.7));
+  const now = new Date();
+  const hr = now.getHours();
+  const greeting = hr < 5 ? 'Late-night notes' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  let dateLine = '';
+  try { dateLine = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }); } catch { /* ignore */ }
+  const gear = h('button', { class: 'icon-btn lg lib-gear', type: 'button', 'aria-label': 'Settings', onClick: () => openSettings(app, { onDataChanged: refresh }) }, icon('gear', 22, 1.7));
 
   // Segmented control with a sliding squircle thumb.
   const segThumb = h('span', { class: 'seg-thumb', 'aria-hidden': 'true' });
@@ -61,19 +66,28 @@ export async function mountLibrary(root, app, opts = {}) {
     onInput: debounce(() => { query = searchInput.value.trim().toLowerCase(); renderGrid(); }, 80),
     onKeydown: e => { if (e.key === 'Enter') searchInput.blur(); },
   });
-  const search = h('label', { class: 'search' }, icon('search', 18, 2.1), searchInput);
+  const search = h('label', { class: 'search' }, icon('search', 19, 2.1), searchInput);
+  searchInput.addEventListener('input', () => search.classList.toggle('has-value', !!searchInput.value));
+  const addBtn = h('button', { class: 'lib-add', type: 'button', 'aria-label': 'New notebook', onClick: e => create(tab, e.currentTarget) }, icon('plus', 24, 2.4));
+  const libDock = h('nav', { class: 'lib-dock lg', 'aria-label': 'Library' }, seg, search, addBtn);
+  const hero = h('div', { class: 'lib-hero-slot' });
+  const secTitle = h('h2', { class: 'lib-sec-title' }, 'Notebooks');
+  const secCount = h('span', { class: 'lib-sec-count' }, '');
 
   const banner = h('div', { class: 'lib-banner-slot' });
   const grid = h('div', { class: 'lib-grid' });
   const scroll = h('div', { class: 'lib-scroll' },
     h('div', { class: 'lib-inner' },
       h('header', { class: 'lib-header' },
-        h('div', { class: 'lib-titles' }, h('h1', { class: 'lib-title' }, 'Flash Notes'), subtitle),
+        h('div', { class: 'lib-titles' },
+          h('div', { class: 'lib-eyebrow' }, h('span', { class: 'lib-brand' }, icon('sparkle', 13, 2.2), 'Flash Notes'), dateLine ? h('span', null, dateLine) : null),
+          h('h1', { class: 'lib-title' }, greeting), subtitle),
         gear),
-      h('div', { class: 'lib-controls' }, seg, search),
       banner,
+      hero,
+      h('div', { class: 'lib-sec' }, secTitle, secCount),
       grid));
-  const el = h('main', { class: 'lib view' }, scroll);
+  const el = h('main', { class: 'lib view' }, scroll, libDock);
   root.append(el);
 
   function setTab(t) {
@@ -145,7 +159,7 @@ export async function mountLibrary(root, app, opts = {}) {
     return cardShell(doc, coverEl(doc), `${plural(n, 'page')} · ${relTime(doc.updatedAt)}`, 'card--nb');
   }
 
-  function boardCard(doc) {
+  function boardTile(doc) {
     const pid = doc.pageIds && doc.pageIds[0];
     const thumb = h('div', { class: 'board-thumb' });
     const tile = h('div', { class: 'board-tile' },
@@ -164,23 +178,39 @@ export async function mountLibrary(root, app, opts = {}) {
         thumb.style.backgroundImage = `url("${data}")`;
       }).catch(() => {});
     }
-    return cardShell(doc, tile, `Edited ${relTime(doc.updatedAt)}`, 'card--wb');
+    return tile;
   }
 
-  function newCard(kind) {
-    const label = kind === 'notebook' ? 'New notebook' : 'New whiteboard';
-    return h('div', { class: `card card--new ${kind === 'notebook' ? 'card--nb' : 'card--wb'}` },
-      h('button', { class: 'card-main new-tile', type: 'button', 'aria-label': label, onClick: e => create(kind, e.currentTarget) },
-        h('span', { class: 'new-shape', 'data-squircle': kind === 'notebook' ? '5 15 15 5' : '20' },
-          h('span', { class: 'new-plus' }, icon('plus', 26, 2.2)))),
-      h('div', { class: 'card-meta' },
-        h('div', { class: 'card-text' }, h('div', { class: 'card-title card-title--accent' }, label), h('div', { class: 'card-sub' }, kind === 'notebook' ? 'Pick a cover' : 'Infinite canvas'))));
+  function boardCard(doc) {
+    return cardShell(doc, boardTile(doc), `Edited ${relTime(doc.updatedAt)}`, 'card--wb');
+  }
+
+  // "Jump back in": the most recently edited notebook or whiteboard, on a liquid-glass card.
+  function renderHero() {
+    clear(hero);
+    const doc = docs[0];
+    if (!doc || docs.length < 2 || query) return;
+    const isNb = doc.kind === 'notebook';
+    const n = (doc.pageIds || []).length;
+    const art = h('div', { class: `hero-art hero-art--${isNb ? 'nb' : 'wb'}` }, isNb ? coverEl(doc) : boardTile(doc));
+    const btn = h('button', { class: 'lib-hero lg', type: 'button', 'aria-label': `Continue ${doc.title}`, onClick: () => open(doc, art) },
+      art,
+      h('div', { class: 'hero-text' },
+        h('div', { class: 'hero-kicker' }, 'Jump back in'),
+        h('div', { class: 'hero-title' }, doc.title),
+        h('div', { class: 'hero-sub' }, isNb ? `${plural(n, 'page')} · edited ${relTime(doc.updatedAt)}` : `Whiteboard · edited ${relTime(doc.updatedAt)}`)),
+      h('span', { class: 'hero-go', 'aria-hidden': 'true' }, 'Continue', icon('chevronRight', 16, 2.6)));
+    hero.append(btn);
   }
 
   function renderGrid(animateIn = false) {
     updateSubtitle();
     syncSeg();
+    renderHero();
     const mine = docs.filter(d => d.kind === tab);
+    secTitle.textContent = tab === 'notebook' ? 'Notebooks' : 'Whiteboards';
+    secCount.textContent = mine.length ? String(mine.length) : '';
+    addBtn.setAttribute('aria-label', tab === 'notebook' ? 'New notebook' : 'New whiteboard');
     const shown = query ? mine.filter(d => (d.title || '').toLowerCase().includes(query)) : mine;
     clear(grid);
     grid.className = `lib-grid lib-grid--${tab === 'notebook' ? 'nb' : 'wb'}`;
@@ -199,7 +229,6 @@ export async function mountLibrary(root, app, opts = {}) {
       return;
     }
 
-    grid.append(newCard(tab));
     for (const d of shown) grid.append(d.kind === 'notebook' ? notebookCard(d) : boardCard(d));
     if (query && !shown.length) {
       grid.append(h('div', { class: 'no-match' }, `No ${tab === 'notebook' ? 'notebooks' : 'whiteboards'} match “${searchInput.value.trim()}”`));

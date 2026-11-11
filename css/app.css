@@ -852,9 +852,6 @@ h1, h2, p { margin: 0; }
 
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 719.9px) {
-  .lib-controls { flex-wrap: wrap; margin: 16px 0 24px; }
-  .seg { width: 100%; }
-  .search { max-width: none; flex-basis: 100%; }
   .lib-grid { gap: 22px 18px; }
   .lib-scroll { padding-left: max(18px, var(--safe-left)); padding-right: max(18px, var(--safe-right)); }
 }
@@ -904,3 +901,153 @@ h1, h2, p { margin: 0; }
   :root:not([data-theme="light"]) .editor { --glass: rgba(28, 28, 30, 0.9); --glass-strong: rgba(32, 32, 34, 0.94); }
 }
 :root[data-theme="dark"] .editor { --glass: rgba(28, 28, 30, 0.9); --glass-strong: rgba(32, 32, 34, 0.94); }
+
+/* ================================================================== v1.1 home screen (liquid glass) */
+.lib {
+  --amb-1: rgba(76, 110, 245, 0.26); --amb-2: rgba(250, 176, 5, 0.22); --amb-3: rgba(230, 73, 128, 0.16);
+  --lg-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.3));
+  --lg-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  --lg-drop: 0 14px 34px rgba(40, 44, 90, 0.16), 0 2px 6px rgba(40, 44, 90, 0.08);
+  --lg-sheen: rgba(255, 255, 255, 0.6);
+  --lg-lens: rgba(255, 255, 255, 0.82);
+  background:
+    radial-gradient(60% 46% at 8% -4%, var(--amb-1), transparent 70%),
+    radial-gradient(48% 40% at 100% 8%, var(--amb-2), transparent 70%),
+    radial-gradient(70% 46% at 62% 108%, var(--amb-3), transparent 70%),
+    var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lib {
+    --amb-1: rgba(92, 124, 250, 0.34); --amb-2: rgba(250, 176, 5, 0.14); --amb-3: rgba(214, 51, 108, 0.24);
+    --lg-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
+    --lg-edge: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    --lg-drop: 0 14px 34px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --lg-sheen: rgba(255, 255, 255, 0.14);
+    --lg-lens: rgba(255, 255, 255, 0.2);
+  }
+}
+:root[data-theme="dark"] .lib {
+  --amb-1: rgba(92, 124, 250, 0.34); --amb-2: rgba(250, 176, 5, 0.14); --amb-3: rgba(214, 51, 108, 0.24);
+  --lg-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
+  --lg-edge: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  --lg-drop: 0 14px 34px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --lg-sheen: rgba(255, 255, 255, 0.14);
+  --lg-lens: rgba(255, 255, 255, 0.2);
+}
+
+/* Liquid glass surface: refracting blur, bright rim, soft sheen. Never put it inside a filtered/faded parent. */
+.lg {
+  position: relative; isolation: isolate;
+  background: var(--lg-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(190%);
+  backdrop-filter: blur(22px) saturate(190%);
+  box-shadow: var(--lg-edge), var(--lg-drop);
+}
+.lg::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 8% 0%, var(--lg-sheen), transparent 52%),
+    radial-gradient(80% 70% at 100% 100%, var(--lg-sheen), transparent 62%);
+  opacity: 0.55;
+}
+
+.lib-scroll { padding-bottom: calc(var(--safe-bottom) + 124px); }
+.lib-inner { max-width: 1120px; }
+.lib-header { align-items: flex-start; padding-top: 18px; }
+.lib-eyebrow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px;
+  font-size: 13px; font-weight: 600; color: var(--text-2);
+}
+.lib-brand {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px 0 8px;
+  border-radius: 13px; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700;
+}
+.lib-title { font-size: clamp(32px, 5vw, 44px); letter-spacing: -0.03em; }
+.lib-subtitle { margin-top: 6px; }
+.lib-gear { width: 48px; height: 48px; border-radius: 50%; color: var(--text); }
+.lib-gear:active { transform: scale(0.94); }
+
+.lib-hero-slot:empty { display: none; }
+.lib-hero-slot { margin-top: 26px; }
+.lib-hero {
+  display: flex; align-items: center; gap: 20px; width: 100%;
+  padding: 18px 20px; border-radius: 30px; text-align: left;
+  transition: transform var(--dur) var(--spring-soft);
+}
+.lib-hero:active { transform: scale(0.985); }
+.hero-art { flex: none; pointer-events: none; }
+.hero-art--nb { width: 78px; transform: rotate(-4deg); }
+.hero-art--wb { width: 124px; }
+.hero-text { flex: 1; min-width: 0; }
+.hero-kicker { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--accent-strong); }
+.hero-title { margin-top: 3px; font-size: 24px; font-weight: 750; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hero-sub { margin-top: 3px; font-size: 14px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hero-go {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 44px; padding: 0 14px 0 18px;
+  border-radius: 22px; font-size: 15px; font-weight: 650; color: var(--on-accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 6px 14px rgba(59, 91, 219, 0.32);
+}
+
+.lib-sec { display: flex; align-items: baseline; gap: 10px; margin: 34px 0 18px; }
+.lib-sec-title { font-size: 22px; font-weight: 750; letter-spacing: -0.015em; }
+.lib-sec-count { font-size: 15px; font-weight: 600; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lib-banner-slot:not(:empty) { margin-top: 22px; }
+.lib-banner { margin-bottom: 0; }
+.lib-sec:has(+ .lib-grid--empty) { display: none; }
+
+/* Floating dock: tabs, search and the "new" button in one glass capsule. */
+.lib-dock {
+  position: absolute; z-index: 5; left: 50%; bottom: calc(var(--safe-bottom) + 16px);
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 24px); padding: 8px; border-radius: 34px;
+}
+.lib-dock .seg { height: 50px; padding: 0; background: none; border-radius: 25px; }
+.lib-dock .seg-thumb {
+  top: 0; bottom: 0; left: 0; width: 50%; border-radius: 25px;
+  background: var(--lg-lens);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(30, 30, 60, 0.14);
+}
+.lib-dock .seg-btn { padding: 0 22px; font-size: 15.5px; }
+.lib-dock .search {
+  flex: none; width: 210px; max-width: none; height: 50px; padding: 0 14px; border-radius: 25px;
+  background: var(--fill); color: var(--text-2);
+  transition: width var(--dur) var(--ease-out), border-color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+}
+.lib-add {
+  flex: none; width: 50px; height: 50px; display: grid; place-items: center; border-radius: 50%;
+  color: var(--on-accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 16px rgba(59, 91, 219, 0.38);
+  transition: transform var(--dur) var(--spring);
+}
+.lib-add:active { transform: scale(0.9) rotate(90deg); }
+
+@media (max-width: 719.9px) {
+  .lib-hero { gap: 14px; padding: 14px; border-radius: 26px; }
+  .hero-art--nb { width: 58px; } .hero-art--wb { width: 84px; }
+  .hero-title { font-size: 19px; }
+  .hero-go { width: 44px; padding: 0; justify-content: center; font-size: 0; gap: 0; }
+  .lib-dock { width: calc(100% - 24px); max-width: 430px; }
+  .lib-dock .seg { flex: 1; min-width: 0; }
+  .lib-dock .seg-btn { padding: 0 8px; }
+  .lib-dock .search { width: 50px; padding: 0 14px; position: relative; }
+  .lib-dock .search .search-input { position: absolute; inset: 0; width: 100%; padding-left: 42px; opacity: 0; }
+  .lib-dock .search:focus-within, .lib-dock .search.has-value { flex: 1; width: auto; }
+  .lib-dock .search:focus-within .search-input, .lib-dock .search.has-value .search-input { opacity: 1; }
+  .lib-dock:has(.search:focus-within) .seg, .lib-dock:has(.search.has-value) .seg { display: none; }
+}
+@supports (corner-shape: squircle) {
+  .lib-hero { corner-shape: squircle; border-radius: 38px; }
+}
+/* The dock floats over covers: tint it more so its labels stay readable on any colour. */
+.lib-dock {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.58));
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(26px) saturate(150%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lib-dock { background: linear-gradient(180deg, rgba(52, 52, 60, 0.78), rgba(26, 26, 30, 0.7)); }
+}
+:root[data-theme="dark"] .lib-dock { background: linear-gradient(180deg, rgba(52, 52, 60, 0.78), rgba(26, 26, 30, 0.7)); }
