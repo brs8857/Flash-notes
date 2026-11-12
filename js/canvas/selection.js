@@ -304,6 +304,15 @@ export class Selection {
         sw.addEventListener('click', (e) => { e.stopPropagation(); this.recolor(c); });
         m.append(sw);
       }
+      // The app's full colour picker (presets, saved colours, custom), when the app provides one.
+      if (typeof this.view.opts.onPickColor === 'function') {
+        m.append(this._button('More…', () => {
+          const first = this.selected().find((it) => it.type !== 'image');
+          try {
+            this.view.opts.onPickColor({ color: first ? first.color : INK_COLORS[0], rect: m.getBoundingClientRect(), apply: (c) => this.recolor(c) });
+          } catch (err) { console.error(err); }
+        }, 'cv-menu-morecolors'));
+      }
     } else {
       const colour = this._button('Colour', () => this._renderMenu('colors'), 'cv-menu-more');
       m.append(
@@ -311,7 +320,7 @@ export class Selection {
         this._button('Duplicate', () => this.duplicate()),
         colour,
         this._button('Copy', (b) => {
-          if (!this.copy()) return;
+          if (this.view.input.exportClipboard() === null) return;
           b.textContent = 'Copied';
           b.classList.add('cv-menu-done');
           setTimeout(() => { if (b.isConnected) { b.textContent = 'Copy'; b.classList.remove('cv-menu-done'); } }, 1100);

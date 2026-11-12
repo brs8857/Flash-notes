@@ -1,5 +1,5 @@
 // Flash Notes service worker: versioned, atomic precache; cache-first; update only when the user taps.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'fln-' + VERSION;
 
 // Builder B's files. The drawing engine's files come from js/canvas/files.json at install time.
@@ -28,6 +28,8 @@ const APP_FILES = [
   './js/ui/settings.js',
   './js/ui/export.js',
   './js/ui/pdf.js',
+  './js/ui/color.js',
+  './js/ui/color-picker.js',
   './js/canvas/files.json',
   './vendor/perfect-freehand.js',
   './icons/icon.svg',

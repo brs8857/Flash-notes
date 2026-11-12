@@ -305,3 +305,7 @@
   .cv-sel rect { animation: none; }
   .cv-menu.cv-pop, .cv-text-frame, .cv-pill.cv-pop { animation: none; }
 }
+
+/* v1.2: the live stroke layer gets its own compositor layer up front (no promotion hitch on the first stroke). */
+.cv-live { will-change: transform, opacity; }
+.cv-menu-morecolors { padding: 0 12px; white-space: nowrap; }

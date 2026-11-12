@@ -7,12 +7,16 @@
 
 import { clampZoom } from './viewport.js';
 import { clamp } from './geom.js';
+import { COPY_MARKER, selectedText, pasteText, pasteImageFile } from './clipboard.js';
 
 const TAP_SLOP = 10;        // px a finger may travel and still count as a tap
 const EARLY_PINCH_MS = 150; // a 2nd finger this soon after the 1st cancels the 1st finger's stroke
 const TWO_FINGER_TAP_MS = 350;
 const PEN_GUARD_MS = 1000;  // no tap-undo this soon after the pencil lifted (resting palm)
 const PEN_TEXT_GUARD_MS = 2000; // touches are ignored this long after the Pencil was last seen while a text box is open
+
+const MAX_PREDICTED_TOUCH = 1, MAX_PREDICTED_PEN = 2;   // predicted samples drawn ahead of the pointer (live preview only)
+const MAX_PREDICT_PX = 48;
 
 const now = () => performance.now();
 
@@ -28,6 +32,7 @@ export class Input {
     this.penId = null;
     this.penSeen = false;
     this.lastPen = -1e9;
+    this.lastCopiedText = '';   // plain text we last put on the system clipboard (tells our own copy from foreign text)
     this.penNear = false;       // a Pencil has been seen (down, moving or hovering) inside the root
     this.space = false;
     this.gesture = null;        // Safari trackpad pinch
@@ -56,12 +61,16 @@ export class Input {
     on(r, 'contextmenu', (e) => { if (!this._isText(e.target)) e.preventDefault(); });   // Scribble / long-press menus in the text box
     on(r, 'selectstart', (e) => { if (!this._isText(e.target)) e.preventDefault(); });
     on(r, 'dragstart', (e) => e.preventDefault());
+    on(document, 'paste', (e) => this._paste(e));
+    on(document, 'copy', (e) => this._copyEvent(e, false));
+    on(document, 'cut', (e) => this._copyEvent(e, true));
     on(window, 'keydown', (e) => this._key(e));
     on(window, 'keyup', (e) => { if (e.key === ' ') this._setSpace(false); });
     on(window, 'blur', () => { this._setSpace(false); this._resetTouches(); });
   }
 
   destroy() {
+    clearTimeout(this._pasteTimer);
     this.abortAll();
     for (const [t, type, fn, opts] of this._l) t.removeEventListener(type, fn, opts);
     this._l.length = 0;
@@ -88,12 +97,22 @@ export class Input {
   /** Pointer event → container px + world coordinates. Always via the container rect. */
   _pt(e, rect) {
     const v = this.view;
-    rect = rect || v.root.getBoundingClientRect();
-    const sx = e.clientX - rect.left - v.root.clientLeft, sy = e.clientY - rect.top - v.root.clientTop;
+    rect = rect || this._measure();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     return {
       sx, sy, wx: v.view.x + sx / v.view.zoom, wy: v.view.y + sy / v.view.zoom,
       pressure: e.pressure, type: e.pointerType || 'mouse', id: e.pointerId,
     };
+  }
+
+  /**
+   * Where the container is on screen. Reading layout on every pointer event is the classic way to make
+   * drawing stutter, so it is measured when a pointer goes down and reused until every pointer is up.
+   */
+  _measure(fresh = false) {
+    if (!fresh && this._rect && (this.action || this.touches.size || this.pinch)) return this._rect;
+    const root = this.view.root, r = root.getBoundingClientRect();
+    return (this._rect = { left: r.left + root.clientLeft, top: r.top + root.clientTop });
   }
 
   _capture(e) { try { e.target.setPointerCapture(e.pointerId); } catch { /* synthetic or stale pointer */ } }
@@ -115,7 +134,7 @@ export class Input {
     e.preventDefault();
     v.stopAnimations();
     const handle = handleEl ? handleEl.dataset.cvHandle : null;
-    const p = this._pt(e);
+    const p = this._pt(e, this.action || this.touches.size ? null : this._measure(true));
 
     if (p.type === 'touch') { this._touchDown(e, p, handle); return; }
     v.smart.pointerDown();
@@ -238,16 +257,35 @@ export class Input {
 
   _actionMove(e, p) {
     const a = this.action;
-    let list = null;
-    if (a.wantsCoalesced && e.getCoalescedEvents) {
-      let ce = null;
-      try { ce = e.getCoalescedEvents(); } catch { /* ignore */ }
-      if (ce && ce.length > 1) {
-        const rect = this.view.root.getBoundingClientRect();
-        list = ce.map((c) => this._pt(c, rect));
+    let list = null, pred = null;
+    if (a.wantsCoalesced) {
+      // Every sample the hardware took since the last event (Apple Pencil reports faster than the display refreshes).
+      if (e.getCoalescedEvents) {
+        let ce = null;
+        try { ce = e.getCoalescedEvents(); } catch { /* ignore */ }
+        if (ce && ce.length > 1) {
+          const rect = this._measure();
+          list = ce.map((c) => this._pt(c, rect));
+        }
+      }
+      // Where the browser expects the pointer to be next: shown in the live stroke only, never stored.
+      if (e.getPredictedEvents) {
+        let pe = null;
+        try { pe = e.getPredictedEvents(); } catch { /* ignore */ }
+        if (pe && pe.length) {
+          const v = this.view, rect = this._measure(), z = v.view.zoom;
+          const n = Math.min(pe.length, p.type === 'pen' ? MAX_PREDICTED_PEN : MAX_PREDICTED_TOUCH);
+          pred = [];
+          for (let i = 0; i < n; i++) {
+            const sx = pe[i].clientX - rect.left, sy = pe[i].clientY - rect.top;
+            // A wild guess (direction change, lifted finger) is worse than none; so is a missing coordinate.
+            if (!(Math.hypot(sx - p.sx, sy - p.sy) <= MAX_PREDICT_PX)) break;
+            pred.push([v.view.x + sx / z, v.view.y + sy / z, p.type === 'pen' ? clamp(pe[i].pressure || p.pressure || 0.5, 0.05, 1) : 0.5]);
+          }
+        }
       }
     }
-    a.move(p, list || [p]);
+    a.move(p, list || [p], pred);
   }
 
   _up(e, cancelled) {
@@ -450,6 +488,54 @@ export class Input {
 
   // ---- keyboard ----------------------------------------------------------------------------------
 
+  // ---- system clipboard ---------------------------------------------------------------------------
+
+  /** Events from a text box / input / dialog belong to that control, not to the canvas. */
+  _clipboardTarget(e) {
+    const v = this.view, t = e.target;
+    if (t && t.closest && t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="dialog"]')) return false;
+    return v.root.isConnected && v.root.getClientRects().length > 0;
+  }
+
+  /** Copy the selection: in-memory (strokes, text, images) and, as plain text, to the system clipboard. */
+  exportClipboard() {
+    const v = this.view;
+    if (!v.selection.copy()) return null;
+    const text = selectedText(v);
+    this.lastCopiedText = text;
+    this._copiedAt = now();
+    try { const p = navigator.clipboard && navigator.clipboard.writeText(text || COPY_MARKER); if (p && p.catch) p.catch(() => {}); } catch { /* not allowed here */ }
+    return text;
+  }
+
+  _copyEvent(e, cut) {
+    const v = this.view;
+    if (!this._clipboardTarget(e) || !v.selection.has() || !e.clipboardData) return;
+    const text = this.exportClipboard();
+    if (text === null) return;
+    try { e.clipboardData.setData('text/plain', text || COPY_MARKER); e.preventDefault(); } catch { /* ignore */ }
+    if (cut) v.selection.delete();
+  }
+
+  _paste(e) {
+    const v = this.view;
+    if (!this._clipboardTarget(e)) return;
+    clearTimeout(this._pasteTimer);
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const files = [...(cd.files || [])].filter((f) => /^image\//.test(f.type));
+    const text = cd.getData('text/plain') || '';
+    const internal = v.selection.canPaste();
+    // Our own copy: the marker, or the exact text we put there, or nothing else on the clipboard.
+    const ours = internal && (text === COPY_MARKER || (text !== '' && text === this.lastCopiedText) || (!text.trim() && !files.length));
+    e.preventDefault();
+    v.stopAnimations();
+    if (ours) { v.requestTool('lasso'); v.selection.paste(); }
+    else if (files.length) pasteImageFile(v, files[0]);
+    else if (text.trim()) pasteText(v, text);
+    else if (internal) { v.requestTool('lasso'); v.selection.paste(); }
+  }
+
   _key(e) {
     const v = this.view;
     const t = e.target;
@@ -461,9 +547,14 @@ export class Input {
     if (mod) {
       if (k === 'z') { take(); if (e.shiftKey) v.redo(); else v.undo(); }
       else if (k === 'y') { take(); v.redo(); }
-      else if (k === 'c' && v.selection.has()) { take(); v.selection.copy(); }
-      else if (k === 'x' && v.selection.has()) { take(); v.selection.copy(); v.selection.delete(); }
-      else if (k === 'v' && v.selection.canPaste()) { take(); v.requestTool('lasso'); v.selection.paste(); }
+      else if (k === 'c' && v.selection.has()) { this.exportClipboard(); }                 // no preventDefault: Safari may still fire 'copy'
+      else if (k === 'x' && v.selection.has()) { this.exportClipboard(); v.selection.delete(); }
+      else if (k === 'v') {
+        // The 'paste' event (text/images from other apps) decides what to do; if the browser sends none, paste our own copy.
+        clearTimeout(this._pasteTimer);
+        this._pasteTimer = setTimeout(() => { if (v.selection.canPaste()) { v.requestTool('lasso'); v.selection.paste(); } }, 200);
+        return;
+      }
       else if (k === 'd' && v.selection.has()) { take(); v.selection.duplicate(); }
       else if (k === 'a') { take(); v.requestTool('lasso'); v.selection.set(v.items.map((it) => it.id)); }
       return;

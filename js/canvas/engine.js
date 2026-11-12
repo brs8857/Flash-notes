@@ -11,18 +11,20 @@
 //   strokes.js   perfect-freehand outlines, Path2D cache, erase maths
 //   text.js      layoutText (single source of wrapping) items.js     normalise / transform / hit-test
 //   images.js    decoded image LRU    history.js  undo stack    viewport.js  clamp/fit maths
+//   brushes.js   brush table (pens, pencils, highlighters) + procedural grain textures
 //   smartink.js  auto shapes / auto-tidy / "Keep original" pill (owns their timers)
 //   shapes.js    shape recognition (pure)   tidy.js  handwriting tidy (pure)   fonts.js  handwriting font
 
 import {
   PAGE_W, PAGE_H, PAPER_STYLES, PAPER_COLORS, BOARD_BACKGROUNDS, INK_COLORS, HIGHLIGHT_COLORS,
-  FONT_STACKS, MIN_FONT_SIZE, PAGE_MARGIN, MAX_CANVAS_PIXELS, HIGHLIGHT_ALPHA, newId,
+  FONT_STACKS, MIN_FONT_SIZE, PAGE_MARGIN, MAX_CANVAS_PIXELS, newId,
 } from './constants.js';
 import { SmartInk } from './smartink.js';
 import { ensureHandFont, handReady, onLateHandFont } from './fonts.js';
 import { resetTextLayout } from './text.js';
 import { round2, bboxOfItems, bboxIntersects } from './geom.js';
 import { drawStroke } from './strokes.js';
+import { getBrush, listBrushes, grainStyle, DEFAULT_BRUSH } from './brushes.js';
 import { usableRect, clampZoom, snapZoom, clampView, fitWidthZoom } from './viewport.js';
 import { paperFill, isDarkPaper, displayColor, drawPaperRules, drawPageShadow, drawBoardBackground } from './paper.js';
 import { drawItems } from './render.js';
@@ -30,16 +32,20 @@ import { normalizeItems, finalizeItem } from './items.js';
 import { History, diffItems } from './history.js';
 import { ImageCache } from './images.js';
 import { Input } from './input.js';
+import { pasteText as clipPasteText, pasteImageFile as clipPasteImage } from './clipboard.js';
 import { DrawTool } from './draw.js';
 import { EraserTool } from './eraser.js';
 import { Selection } from './selection.js';
 import { TextEditor } from './textedit.js';
 
-export { renderPageToCanvas, renderBoardToCanvas, makeThumbnail } from './render.js';
+export { renderPageToCanvas, renderBoardToCanvas, makeThumbnail, renderBrushPreview } from './render.js';
+export { listBrushes } from './brushes.js';
 
 const TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'hand'];
 const SLOW_DRAW_MS = 10;   // above this, gestures transform the bitmap and redraw crisply on settle
 const SETTLE_MS = 100;
+const HEAVY_ITEMS = 250;   // this many items on screen: a pinch/pan moves the bitmap (canvas calls are only recorded during
+                           // the draw, so the measured draw time alone under-reports how long a busy page takes to rasterise)
 const MAX_STALE_MS = 250;  // longest a transformed bitmap is shown before a real redraw during a gesture
 
 function clone(value) {
@@ -70,15 +76,20 @@ export class CanvasView {
 
     this.tool = 'pen';
     this.toolOpts = {
-      pen: { color: INK_COLORS[0], size: 3 },
-      highlighter: { color: HIGHLIGHT_COLORS[0], size: 20 },
+      pen: { brush: DEFAULT_BRUSH.pen, color: INK_COLORS[0], size: 3 },
+      highlighter: { brush: DEFAULT_BRUSH.highlighter, color: HIGHLIGHT_COLORS[0], size: 20 },
       eraser: { size: 24, eraseMode: 'stroke' },
       text: { color: INK_COLORS[0], size: 22, font: 'sans' },
       lasso: {}, hand: {},
     };
+    this.brushMemo = { pen: {}, highlighter: {} };   // brush id → {color, size}: every brush remembers its own
     this.pencilOnly = false;
     this.twoFingerUndo = true;
     this.insets = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (opts.insets) {     // known up front: the very first draw is at the final view, not drawn twice
+      const n = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+      this.insets = { top: n(opts.insets.top), right: n(opts.insets.right), bottom: n(opts.insets.bottom), left: n(opts.insets.left) };
+    }
     this.kbInset = 0;              // on-screen keyboard overlap while editing text (CSS px)
 
     this.view = { x: 0, y: 0, zoom: 1 };
@@ -110,6 +121,7 @@ export class CanvasView {
 
     // --- render-loop state ---
     this._raf = 0; this._needMain = false; this._needLive = false; this._liveHas = false;
+    this._liveFull = true; this._liveView = null; this._heavy = false; this._gestureAt = 0; this._gestureSlow = 0;
     this._drawnView = null; this._lastDrawMs = 0; this._lastDrawAt = 0; this._bitmap = false;
     this._settleT = 0; this._viewT = 0; this._viewAt = 0; this._anim = 0; this._probe = 0;
     this._frame = this._frame.bind(this);
@@ -140,7 +152,7 @@ export class CanvasView {
     window.addEventListener('resize', this._onWinResize);
 
     this._setPage(opts.page);
-    this.resize();
+    this.resize(true);
     // Defensive: the app also starts this at boot. Text laid out before the font arrived is redone.
     if (!handReady()) {
       const redo = () => this._handFontReady();
@@ -169,13 +181,47 @@ export class CanvasView {
   setToolOptions(tool, opts) {
     const o = this.toolOpts[tool];
     if (!o || !opts) return;
+    if (tool === 'pen' || tool === 'highlighter') {
+      const memo = this.brushMemo[tool];
+      const next = typeof opts.brush === 'string' ? getBrush(opts.brush, tool) : null;
+      if (next && next.id !== o.brush) {
+        // Switching brush: put the old one's colour and size away, take out the new one's.
+        memo[o.brush] = { color: o.color, size: o.size };
+        const m = memo[next.id];
+        o.brush = next.id;
+        o.color = m ? m.color : next.color || o.color;
+        o.size = m ? m.size : next.size;
+        this._warmBrush(tool);
+      }
+      if (typeof opts.color === 'string' && opts.color) o.color = opts.color;
+      if (Number.isFinite(opts.size) && opts.size > 0) o.size = Math.min(200, Math.max(0.2, opts.size));
+      memo[o.brush] = { color: o.color, size: o.size };
+      if (tool === 'pen') this.smart.setOptions(opts);   // {autoShapes, autoTidy}: booleans only
+      return;
+    }
     if (typeof opts.color === 'string' && opts.color) o.color = opts.color;
     if (Number.isFinite(opts.size) && opts.size > 0) o.size = tool === 'text' ? Math.max(MIN_FONT_SIZE, opts.size) : opts.size;
     if (opts.eraseMode === 'stroke' || opts.eraseMode === 'area') o.eraseMode = opts.eraseMode;
     else if (opts.eraseMode === 'precise') o.eraseMode = 'area';
     if (typeof opts.font === 'string' && FONT_STACKS[opts.font]) o.font = opts.font;
-    if (tool === 'pen') this.smart.setOptions(opts);   // {autoShapes, autoTidy}: booleans only
     if (tool === 'text') this.textEdit.setOptions({ color: opts.color, size: opts.size && o.size, font: opts.font && o.font });
+  }
+
+  /** Current options of a tool (a copy): {brush, color, size} for pen / highlighter. */
+  getToolOptions(tool) { return this.toolOpts[tool] ? { ...this.toolOpts[tool] } : null; }
+
+  /** The brush library: [{id, label, kind:'pen'|'highlighter', size, min, max, sizes:[3 quick sizes], color}]. */
+  getBrushes() { return listBrushes(); }
+
+  /** Build a textured brush's grain tile ahead of the first stroke (it takes a few ms once per zoom level). */
+  _warmBrush(tool) {
+    const o = this.toolOpts[tool], b = getBrush(o.brush, tool);
+    if (!b || !b.grain || this.destroyed) return;
+    clearTimeout(this._warmT);
+    this._warmT = setTimeout(() => {
+      if (this.destroyed || this.input.busy) return;
+      grainStyle(b.grain, displayColor(o.color, this.isDark()), this.dpr * this.view.zoom);
+    }, 60);
   }
 
   setPencilOnly(on) { this.pencilOnly = !!on; }
@@ -263,6 +309,10 @@ export class CanvasView {
     this.textEdit.createAt(wx, wy);
   }
 
+  /** Paste plain text from the system clipboard as a text box / an image file as an image (also used by ⌘V). */
+  pasteText(text) { return clipPasteText(this, text); }
+  pasteImage(file) { return clipPasteImage(this, file); }
+
   deleteSelection() { this.selection.delete(); }
   clearSelection() { this.selection.clear(); }
 
@@ -308,8 +358,9 @@ export class CanvasView {
     this.applyView({ x: v.x, y: v.y, zoom: clampZoom(v.zoom, this.mode) }, { force: true, silent: true });
   }
 
-  /** Re-measure the container (also called automatically by a ResizeObserver). */
-  resize() {
+  /** Re-measure the container (also called automatically by a ResizeObserver). `defer`: the first paint waits for
+   *  the next frame (constructor: nothing is on screen yet, and the app is about to set the view). */
+  resize(defer = false) {
     if (this.destroyed) return;
     const w = this.root.clientWidth, h = this.root.clientHeight;
     if (!w || !h) return;
@@ -324,13 +375,14 @@ export class CanvasView {
       this.main.height = this.live.height = bh;
       this._liveHas = true;
     }
+    this._liveFull = true;
     if (this.pristine) this._resetView(true);
     else this.applyView(this.view, { force: true, silent: true });
     this._syncOverlay();
     this._needLive = true;
     this.invalidate();
     // Draw in this task: assigning canvas.width clears the bitmap, waiting for rAF would flash.
-    if (sized) this._flush();
+    if (sized && !defer) this._flush();
   }
 
   destroy() {
@@ -342,6 +394,7 @@ export class CanvasView {
     this.stopAnimations();
     this.input.destroy();
     cancelAnimationFrame(this._raf);
+    clearTimeout(this._warmT);
     clearTimeout(this._settleT);
     clearTimeout(this._viewT);
     if (this._ro) this._ro.disconnect();
@@ -440,13 +493,7 @@ export class CanvasView {
     this._worldTransform(ctx);
     if (this.mode === 'page') { ctx.beginPath(); ctx.rect(0, 0, PAGE_W, PAGE_H); ctx.clip(); }
     ctx.lineJoin = 'round';
-    if (item.tool === 'highlighter') {
-      ctx.globalAlpha = HIGHLIGHT_ALPHA;
-      ctx.lineCap = 'round';
-      drawStroke(ctx, item, z, item.color);
-    } else {
-      drawStroke(ctx, item, z, displayColor(item.color, this.isDark()));
-    }
+    drawStroke(ctx, item, z, item.tool === 'highlighter' ? item.color : displayColor(item.color, this.isDark()), this.dpr * z);
     ctx.restore();
   }
 
@@ -462,7 +509,7 @@ export class CanvasView {
     if (!same) this.view = v;
     if (o.user) this.pristine = false;
     this._syncOverlay();
-    if (o.interactive && this._lastDrawMs > SLOW_DRAW_MS && this._drawnView && !this._needMain) {
+    if (o.interactive && (this._heavy || this._lastDrawMs > SLOW_DRAW_MS) && this._drawnView && !this._needMain) {
       // Heavy page: move the existing bitmap now, redraw crisply when the gesture pauses.
       this._bitmapTransform();
       clearTimeout(this._settleT);
@@ -504,9 +551,23 @@ export class CanvasView {
     this._schedule();
   }
 
+  /** The live layer must be redrawn from scratch (next frame). */
   invalidateLive() {
+    this._liveFull = true;
     this._needLive = true;
     this._schedule();
+  }
+
+  /**
+   * Draw the live layer right now, inside the pointer event, instead of waiting for the next animation
+   * frame: the newest ink reaches the screen up to a frame sooner. Only the stroke's tail is repainted
+   * (see draw.js), so this is cheap. Falls back to the frame loop while the main canvas is not settled.
+   */
+  drawLiveNow() {
+    if (this.destroyed) return;
+    if (!this.cssW || this._needMain || this._bitmap) { this._needLive = true; this._schedule(); return; }
+    this._needLive = false;
+    this._drawLive();
   }
 
   // =================================================================================================
@@ -521,7 +582,9 @@ export class CanvasView {
     };
     this.root.dataset.paper = this.paper.color;
     this.smart.pageChanged();
-    this.items = normalizeItems(clone(Array.isArray(page?.items) ? page.items : []));
+    // normalizeItems builds brand-new items (points, shape, text) and never touches the input, so the page record the
+    // app keeps is not copied first (a structured clone of 500 strokes is ~8 ms; of an image item, megabytes).
+    this.items = normalizeItems(Array.isArray(page?.items) ? page.items : []);
     this.history.clear();
     this.selection.clear();
     this.hidden.clear();
@@ -530,6 +593,7 @@ export class CanvasView {
     this.pristine = true;
     this._resetView(true);
     this._needLive = true;
+    this._liveFull = true;
     this.invalidate();
   }
 
@@ -552,13 +616,28 @@ export class CanvasView {
     if (this.destroyed || this.input.action || this.input.pinch) return;
     this.smart.cancel();
     this.textEdit.commit();
+    const stack = dir === 'undo' ? this.history.undoStack : this.history.redoStack;
+    const cmd = stack[stack.length - 1];
+    const region = cmd ? this._changeRegion(cmd) : null;
     const next = dir === 'undo' ? this.history.undo(this.items) : this.history.redo(this.items);
     if (!next) return;
     this.selection.clear();
     this.items = next;
-    this.invalidate();
+    // A few items came or went: repaint just where they were (a full redraw of a busy page is 15-40 ms).
+    if (region) this._drawMain(region); else this.invalidate();
     this._emitHistory();
     this._emitChange(dir);
+  }
+
+  /** World bbox covering the items of an undo / redo command, or null when a full redraw is the safer choice. */
+  _changeRegion(cmd) {
+    if (this._needMain || this._bitmap || this.hidden.size || !this.cssW || !this._drawnView || this._drawnView !== this.view) return null;
+    const list = cmd.added.concat(cmd.removed);
+    if (!list.length || list.length > 40) return null;
+    const b = bboxOfItems(list.map(([, it]) => it));
+    if (!b || !b.every(Number.isFinite)) return null;
+    const z = this.view.zoom, area = (b[2] - b[0]) * (b[3] - b[1]) * z * z;
+    return area > this.cssW * this.cssH * 0.5 ? null : b;
   }
 
   /** Page is being hidden/destroyed: make sure nothing typed or drawn is left uncommitted. */
@@ -686,15 +765,31 @@ export class CanvasView {
     this._bitmap = true;
   }
 
-  _drawMain() {
+  /** Redraw the main canvas; with `region` (world bbox) only that rectangle is repainted (undo / redo of a few items). */
+  _drawMain(region = null) {
     const t0 = performance.now();
     const { ctx, dpr, cssW: w, cssH: h, view } = this;
     const z = view.zoom;
     const dark = this.isDark();
     const getImage = (it) => this.images.get(it);
     let visible = [view.x, view.y, view.x + w / z, view.y + h / z];
+    let drawn = 0;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (region) {
+      // Whole device pixels (+2 for anti-aliasing), so the repaint meets the untouched bitmap seamlessly.
+      const k = dpr * z;
+      const x0 = Math.max(0, Math.floor((region[0] - view.x) * k) - 2), y0 = Math.max(0, Math.floor((region[1] - view.y) * k) - 2);
+      const x1 = Math.min(this.main.width, Math.ceil((region[2] - view.x) * k) + 2), y1 = Math.min(this.main.height, Math.ceil((region[3] - view.y) * k) + 2);
+      if (x1 <= x0 || y1 <= y0) return;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.beginPath();
+      ctx.rect(x0, y0, x1 - x0, y1 - y0);
+      ctx.clip();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      visible = [view.x + x0 / k, view.y + y0 / k, view.x + x1 / k, view.y + y1 / k];
+    }
     if (this.mode === 'page') {
       ctx.fillStyle = this.theme.desk;
       ctx.fillRect(0, 0, w, h);
@@ -709,23 +804,26 @@ export class CanvasView {
       ctx.clip();
       drawPaperRules(ctx, this.paper, z);
       visible = [Math.max(visible[0], 0), Math.max(visible[1], 0), Math.min(visible[2], PAGE_W), Math.min(visible[3], PAGE_H)];
-      drawItems(ctx, this.items, { zoom: z, dark, visible, skip: this.hidden.size ? this.hidden : null, getImage });
+      drawn = drawItems(ctx, this.items, { zoom: z, dark, visible, skip: this.hidden.size ? this.hidden : null, getImage });
       ctx.restore();
     } else {
       ctx.fillStyle = paperFill(this.paper);
       ctx.fillRect(0, 0, w, h);
       drawBoardBackground(ctx, w, h, view, this.background, dark);
       this._worldTransform(ctx);
-      drawItems(ctx, this.items, { zoom: z, dark, visible, skip: this.hidden.size ? this.hidden : null, getImage });
+      drawn = drawItems(ctx, this.items, { zoom: z, dark, visible, skip: this.hidden.size ? this.hidden : null, getImage });
     }
+    if (region) { ctx.restore(); return; }
     this.images.endFrame();
 
     this._drawnView = view;
+    this._heavy = drawn > HEAVY_ITEMS;
     if (this._bitmap) {
       this.main.style.transform = '';
       this.live.style.transform = '';
       this._bitmap = false;
       this._needLive = true; // the live layer was transformed too: redraw it at the new view
+      this._liveFull = true;
     }
     clearTimeout(this._settleT);
     this._lastDrawAt = performance.now();
@@ -734,6 +832,13 @@ export class CanvasView {
 
   _drawLive() {
     const ctx = this.lctx;
+    const others = !!(this.selection.xf || this.selection.lasso || this.smart.fx);
+    // Stroke in progress and the canvas already holds it at this view: repaint only its tail.
+    if (!this._liveFull && !others && this._liveView === this.view && this.draw.incremental()) {
+      this._worldTransform(ctx);
+      this.draw.renderIncremental(ctx);
+      return;
+    }
     if (this._liveHas) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, this.live.width, this.live.height);
@@ -744,5 +849,7 @@ export class CanvasView {
     const b = this.selection.renderLive(ctx);
     const c = this.smart.renderLive(ctx);
     this._liveHas = a || b || c;
+    this._liveView = this.view;
+    this._liveFull = others || !this.draw.incremental();
   }
 }

@@ -1,18 +1,21 @@
 // Scene rendering shared by the live view and the pure export helpers (thumbnails, PNG, PDF).
 
-import { PAGE_W, PAGE_H, HIGHLIGHT_ALPHA } from './constants.js';
+import { PAGE_W, PAGE_H } from './constants.js';
 import { bboxIntersects, bboxOfItems } from './geom.js';
-import { drawStroke } from './strokes.js';
+import { drawStroke, deviceScale } from './strokes.js';
 import { drawText, resetTextLayout } from './text.js';
 import { decodeImage } from './images.js';
 import { normalizeItems } from './items.js';
 import { ensureHandFont, handReady, usesHandFont } from './fonts.js';
+import { getBrush, DEFAULT_BRUSH } from './brushes.js';
+import { PAPER_COLORS } from './constants.js';
 import { paperFill, isDarkPaper, displayColor, drawPaperRules, drawBoardBackground } from './paper.js';
 
 /**
  * Draw items in world coordinates (the ctx transform must already map world → device).
  * Pass order: images → highlighters → pens → text; array order is the z-order within a pass.
  * @param {object} o {zoom, dark, visible?:bbox, skip?:Set<id>, getImage(item) → drawable|null}
+ * @returns {number} how many items were drawn
  */
 export function drawItems(ctx, items, o) {
   const images = [], highlights = [], pens = [], texts = [];
@@ -33,17 +36,13 @@ export function drawItems(ctx, items, o) {
       ctx.fillRect(it.x, it.y, it.w, it.h);
     }
   }
-  if (highlights.length) {
-    ctx.save();
-    ctx.globalAlpha = HIGHLIGHT_ALPHA;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (const it of highlights) drawStroke(ctx, it, o.zoom, it.color);
-    ctx.restore();
-  }
+  // Each stroke brings its own opacity and texture (brushes.js).
+  const k = highlights.length || pens.length ? deviceScale(ctx) : 1;
+  for (const it of highlights) drawStroke(ctx, it, o.zoom, it.color, k);
   ctx.lineJoin = 'round';
-  for (const it of pens) drawStroke(ctx, it, o.zoom, displayColor(it.color, o.dark));
+  for (const it of pens) drawStroke(ctx, it, o.zoom, displayColor(it.color, o.dark), k);
   for (const it of texts) drawText(ctx, it, displayColor(it.color, o.dark));
+  return images.length + highlights.length + pens.length + texts.length;
 }
 
 // ---- Pure render helpers ----------------------------------------------------------------------
@@ -165,4 +164,51 @@ export async function makeThumbnail(page, kind) {
   const url = canvas.toDataURL('image/jpeg', 0.78);
   canvas.width = canvas.height = 0; // Safari keeps canvas memory alive otherwise
   return url;
+}
+
+// ---- Brush previews (tool options) ----------------------------------------------------------------
+
+const previewPoints = new Map();
+/** An "S" squiggle with a pressure swell, w × h world units, as stroke points. */
+function squiggle(w, h, inset) {
+  const key = w + '|' + h + '|' + inset;
+  let pts = previewPoints.get(key);
+  if (!pts) {
+    pts = [];
+    const n = 44, x0 = inset, x1 = w - inset, amp = (h - inset * 2) * 0.3;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      pts.push([x0 + (x1 - x0) * t, h / 2 - Math.sin(t * Math.PI * 2) * amp * (0.9 + 0.1 * t), 0.18 + 0.8 * Math.pow(Math.sin(t * Math.PI), 1.3)]);
+    }
+    previewPoints.set(key, pts);
+  }
+  return pts;
+}
+
+/**
+ * Draw a sample stroke of a brush into a canvas (the app's brush picker). The canvas is sized by the
+ * caller (backing store = CSS size × devicePixelRatio); the sample is drawn with the real renderer.
+ * @param {HTMLCanvasElement} canvas
+ * @param {{tool:'pen'|'highlighter', brush:string, color:string, size:number, dark?:boolean, paper?:boolean}} o
+ */
+export function renderBrushPreview(canvas, o) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (!W || !H) return;
+  const tool = o.tool === 'highlighter' ? 'highlighter' : 'pen';
+  const brush = getBrush(o.brush, tool) || getBrush(DEFAULT_BRUSH[tool], tool);
+  const cssH = o.cssHeight || 44, dpr = H / cssH;
+  // World units → CSS px: like a page at 140%, but thick brushes are scaled down to fit the swatch.
+  const size = o.size > 0 ? o.size : brush.size;
+  const maxPx = cssH * (tool === 'highlighter' ? 0.5 : 0.36);
+  const z = Math.min(1.4, maxPx / size);
+  const k = z * dpr;
+  if (o.paper) { ctx.fillStyle = PAPER_COLORS[o.dark ? 'dark' : 'white']; ctx.fillRect(0, 0, W, H); }
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const inset = Math.min(size * 0.7 + 2, (W / k) * 0.2);
+  const item = { type: 'stroke', tool, brush: brush.id, color: o.color, size, points: squiggle(Math.round(W / k), Math.round(H / k), Math.round(inset)) };
+  ctx.lineJoin = 'round';
+  drawStroke(ctx, item, z, tool === 'highlighter' ? o.color : displayColor(o.color, !!o.dark), k);
 }

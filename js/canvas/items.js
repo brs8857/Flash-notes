@@ -6,6 +6,7 @@ import { round2, bboxContains } from './geom.js';
 import { strokeBBox, distToStroke } from './strokes.js';
 import { layoutText } from './text.js';
 import { SHAPE_KINDS } from './shapes.js';
+import { getBrush } from './brushes.js';
 
 const fin = Number.isFinite;
 
@@ -43,6 +44,7 @@ export function normalizeItems(raw) {
         size: fin(it.size) && it.size > 0 ? it.size : 3, points,
       };
       if (it.sim) item.sim = true;
+      if (getBrush(it.brush, item.tool)) item.brush = it.brush;   // v1.2; unknown ids fall back to the default look
       // Recognised shapes (v1.1): keep the crisp rendering flag and the kind, nothing else.
       if (item.tool === 'pen' && it.uniform === true) item.uniform = true;
       if (item.tool === 'pen' && it.shape && SHAPE_KINDS.includes(it.shape.kind)) item.shape = { kind: it.shape.kind };

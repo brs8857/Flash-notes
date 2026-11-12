@@ -44,10 +44,11 @@ export function openPopover(anchor, content, opts = {}) {
     closed = true;
     openPops = Math.max(0, openPops - 1);
     offKey(); offResize();
+    if (ro) ro.disconnect();
     catcher.remove();
     pop.classList.remove('is-open');
     pop.classList.add('is-closing');
-    setTimeout(() => pop.remove(), reducedMotion() ? 0 : 160);
+    setTimeout(() => pop.remove(), reducedMotion() ? 0 : 120);
     try { if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus({ preventScroll: true }); } catch { /* ignore */ }
     if (onClose) onClose();
   }
@@ -61,6 +62,16 @@ export function openPopover(anchor, content, opts = {}) {
 
   document.body.append(catcher, pop);
   reposition();
+  // Content that grows after opening (a colour picker, a longer list) must not slide under the screen edge.
+  let ro = null;
+  if (typeof ResizeObserver === 'function') {
+    let size = `${pop.offsetWidth}x${pop.offsetHeight}`;
+    ro = new ResizeObserver(() => {
+      const now = `${pop.offsetWidth}x${pop.offsetHeight}`;
+      if (now !== size && !closed) { size = now; reposition(); }
+    });
+    ro.observe(pop);
+  }
   void pop.offsetHeight;
   pop.classList.add('is-open');
   pop.focus({ preventScroll: true });

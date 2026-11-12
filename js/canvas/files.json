@@ -1,5 +1,7 @@
 [
   "css/canvas.css",
+  "js/canvas/brushes.js",
+  "js/canvas/clipboard.js",
   "js/canvas/constants.js",
   "js/canvas/draw.js",
   "js/canvas/engine.js",

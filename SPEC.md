@@ -737,3 +737,22 @@ touch. The current code already gets several things right (keep them): `input._d
 - 2026-11-12 Auto-tidy: each stroke gets one automatic chance (the snapshot leaves the pending list whether or not its group was tidied). `HOLD_MS`/`HOLD_PX` moved to `constants.js`. `addStroke(item, reason = 'stroke')`.
 - 2026-11-12 `sw.js` VERSION is `'v3'` (v2 was taken by the home-screen redesign).
 
+
+---
+
+# v1.2 — Pens & colour (builder notes, 2026-11-12)
+- **Data model**: stroke items gain optional `brush` (id from `js/canvas/brushes.js`: pens `pen, fineliner, ballpoint, fountain, brush, marker, pencil, mechanical, charcoal`; highlighters `chisel, round, pastel`). No `brush` = saved before v1.2 = drawn exactly as v1.1. `normalizeItems` keeps a known id that matches the stroke's tool and drops anything else. New strokes always carry one. Finger strokes with a `brush` use a lighter streamline than v1.1 (`simStreamline`).
+- **Rendering**: one outline per stroke as before. `drawStroke(ctx, item, zoom, color, k?)` now applies the brush's opacity itself (callers no longer set `globalAlpha` for highlighters) and fills grainy brushes with a world-anchored tiling pattern (`grainStyle`). Chisel highlighter = union of swept-nib hulls in one path. Recognised shapes keep their brush (colour, size, opacity, grain) with the uniform outline.
+- **Engine API**: `setToolOptions(tool, {brush})` (switching restores that brush's remembered colour and size), `getToolOptions(tool)`, `getBrushes()`; module exports `listBrushes()` and `renderBrushPreview(canvas, {tool, brush, color, size, dark, cssHeight})`. New optional callback `onPickColor({color, rect, apply(hex)})`: when present the lasso's colour row shows "More…".
+- **Live stroke**: `draw.js` bakes the stroke in 24-point chunks and repaints only the tail's rectangle (`renderIncremental`); `view.drawLiveNow()` draws inside the pointer event; `invalidateLive()` still means "redraw the layer from scratch". The stroke's opacity is CSS `opacity` on the live canvas. Actions' `move(p, samples, predicted)` gets predicted points (live preview only). `Input._measure()` caches the container rect per gesture.
+- **Pan/zoom**: a view with more than 250 items on screen always takes the bitmap-transform path during gestures.
+- **Settings**: `tools.pen` / `tools.highlighter` = `{brush, color, size, memo:{brushId:{color,size}}}`; `customColors` (≤ 24), `recentColors` (now ≤ 8).
+- **App**: `js/ui/color.js` (pure colour maths + palettes), `js/ui/color-picker.js` (picker, swatch sections, colour memory). `sw.js` VERSION `'v4'`. CSS durations in `tokens.css` shortened (120 / 200 / 300 ms).
+- **Not done**: no per-colour opacity slider (opacity belongs to the brush); pressure → darkness is per stroke, not along a stroke.
+
+## v1.2 review pass (2026-11-12)
+- **fastTap** (`js/ui/dom.js`, also the `onFast` prop of `h()`): dock tools, quick dots, undo/redo, zoom, pager, add page, popover openers, swatches, brush chips, size buttons react on `pointerdown` for touch / Pencil; the click that follows is swallowed once (document-level capture listener, 700 ms, 48 px). Mouse / keyboard use click. Inside a scroller (brush row, tall popover) and for long-press swatches it runs on lift instead (no movement, < 450 ms), so starting a scroll never presses a button. NOT used for handlers that need Safari's user activation (the dock's image button / file picker, menu items, rename dialog): those stay on click.
+- `idle(fn, timeout)` (dom.js): `requestIdleCallback` with a 120 ms timeout fallback (Safari has none). Thumbnails (~100 ms on a full page) are rendered when idle, never during a page turn.
+- Engine: `opts.insets` (the editor passes its measured insets, so the first draw is the final one) and `resize(true)` in the constructor defer the first paint to the next frame: opening a page redraws once, not twice. `_setPage` no longer structured-clones the page (normalizeItems already builds fresh items).
+- Undo / redo of ≤ 40 items repaints only the changed region (`_drawMain(region)`, clip aligned to device pixels, +2 px) when the main canvas is in sync; otherwise the old full redraw. Region repaint can differ from a full redraw by a few levels (≤ 9/255) on a few pixels (Skia anti-aliasing of partially clipped paths).
+- Popovers reposition when their content grows (ResizeObserver); the colour picker ignores a drag on a zero-size layout, closes the keyboard, ends on `lostpointercapture`, and commits one "recent colour" per burst of arrow keys.

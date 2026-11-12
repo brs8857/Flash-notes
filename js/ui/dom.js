@@ -12,6 +12,7 @@ export function h(tag, props, ...children) {
       else if (k === 'style') { if (typeof v === 'string') el.style.cssText = v; else setStyles(el, v); }
       else if (k === 'dataset') Object.assign(el.dataset, v);
       else if (k === 'html') el.innerHTML = v;
+      else if (k === 'onFast' && typeof v === 'function') fastTap(el, v);
       else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
       else if (PROP_KEYS.has(k)) el[k] = v;
       else el.setAttribute(k, v === true ? '' : v);
@@ -36,11 +37,88 @@ export function setStyles(el, styles) {
   }
 }
 
+// ---- fastTap ------------------------------------------------------------------------------------------
+// Touch and Pencil taps normally wait for the finger to lift (and the browser's click) before anything
+// happens; fastTap reacts on pointerdown. The click that follows is swallowed once (near the same spot,
+// within FAST_GAP ms) so the handler never runs twice. Mouse and keyboard keep using plain click.
+// Falls back to "run on lift" (pointerup, no movement) when the element sits in something that scrolls
+// (a long brush row, a tall popover) or when asked for (`deferred`: long-press controls), so starting a
+// scroll never presses a button. Do NOT use it for handlers that need a user activation Safari only grants
+// on pointerup/click (file pickers, share sheet, clipboard): use a plain click there.
+const FAST_GAP = 700, TAP_SLOP = 8, TAP_MAX_MS = 450;
+let fastHit = null, fastReady = false;
+
+function installFastTap() {
+  if (fastReady) return;
+  fastReady = true;
+  document.addEventListener('pointerdown', () => { fastHit = null; }, true);
+  document.addEventListener('click', e => {
+    if (!fastHit) return;
+    const f = fastHit;
+    if (performance.now() - f.t > FAST_GAP) { fastHit = null; return; }
+    if (e.detail !== 0 && Math.hypot(e.clientX - f.x, e.clientY - f.y) < 48) {
+      fastHit = null;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  }, true);
+}
+
+function inScroller(el) {
+  for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    if (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1) {
+      const cs = getComputedStyle(n);
+      if (/(auto|scroll)/.test(cs.overflowX + cs.overflowY)) return true;
+    }
+  }
+  return false;
+}
+
+/** Run `handler` as soon as a finger / Pencil touches `el` (and on click for mouse / keyboard). → remove() */
+export function fastTap(el, handler, { deferred = false } = {}) {
+  installFastTap();
+  let track = null;
+  const run = e => { fastHit = { x: e.clientX, y: e.clientY, t: performance.now() }; handler(e); };
+  const down = e => {
+    track = null;
+    if (e.pointerType === 'mouse' || !e.isPrimary || (e.button && e.button !== 0) || el.disabled) return;
+    if (deferred || inScroller(el)) track = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
+    else run(e);
+  };
+  const move = e => { if (track && e.pointerId === track.id && Math.hypot(e.clientX - track.x, e.clientY - track.y) > TAP_SLOP) track = null; };
+  const up = e => {
+    const t = track;
+    track = null;
+    if (t && e.pointerId === t.id && performance.now() - t.t < TAP_MAX_MS && !el.disabled) run(e);
+  };
+  const cancel = () => { track = null; };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointermove', move);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', cancel);
+  el.addEventListener('click', handler);
+  return () => {
+    el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move);
+    el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', cancel);
+    el.removeEventListener('click', handler);
+  };
+}
+
 export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
 
 export function on(target, type, fn, opts) {
   target.addEventListener(type, fn, opts);
   return () => target.removeEventListener(type, fn, opts);
+}
+
+/** Run `fn` when the browser has nothing better to do (requestIdleCallback; Safari has none: a short timeout). */
+export function idle(fn, timeout = 1500) {
+  if (typeof requestIdleCallback === 'function') {
+    const id = requestIdleCallback(fn, { timeout });
+    return () => cancelIdleCallback(id);
+  }
+  const id = setTimeout(fn, 120);
+  return () => clearTimeout(id);
 }
 
 export const wait = ms => new Promise(r => setTimeout(r, ms));

@@ -1,10 +1,11 @@
 // Editor: one component for notebook pages and whiteboards. Keeps ONE CanvasView and load()s pages into it.
-import { h, on, clamp, debounce, animate, EASE_OUT, downscaleImage, filePicker, plural } from './dom.js';
+import { h, on, clamp, debounce, animate, EASE_OUT, downscaleImage, filePicker, plural, idle } from './dom.js';
 import { icon } from './icons.js';
 import { openMenu } from './menu.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { toast } from './toast.js';
 import { createToolbar } from './toolbar.js';
+import { colorMemory, openColorPicker } from './color-picker.js';
 import { openPageDrawer } from './page-drawer.js';
 import { paperPicker, boardPicker } from './paper.js';
 import { exportPagePng, exportNotebookPdf } from './export.js';
@@ -22,19 +23,22 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   const isBoard = doc.kind === 'whiteboard';
   const kind = doc.kind;
   let index = isBoard ? 0 : clamp(pageIndex | 0, 0, doc.pageIds.length - 1);
-  let page = await loadPage(doc.pageIds[index]);
+  // The page and where the user left off in it load together (one round trip, one first draw at the right place).
+  let [page, savedView] = await Promise.all([loadPage(doc.pageIds[index]), store.getViewState(doc.pageIds[index]).catch(() => null)]);
   let view = null;
   let destroyed = false;
   let loading = false;          // true while view.load() runs (engine may commit pending edits of the OLD page)
   let suppressSave = false;     // true while swapping away from a page that was just deleted
   let dirty = false;
   let saveTimer = null;
+  let saveDeferred = 0;
   let lastSave = Promise.resolve();
   let persistAsked = false;
   let saveFailed = false;       // a failed save has already been reported (don't toast on every retry)
   let adding = false;           // an "add page" is in flight (double taps must not add two pages)
   let thumbTimer = null;
   let thumbDirty = false;
+  let cancelIdleThumb = null;
   let drawer = null;
   let queue = Promise.resolve();
   const offs = [];
@@ -70,11 +74,11 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
 
   const backBtn = h('button', { class: 'bar-btn bar-btn--back', type: 'button', 'aria-label': 'Back to library', onClick: () => app.back() },
     icon('chevronLeft', 22, 2.3), h('span', { class: 'bar-btn-label' }, 'Library'));
-  const pagesBtn = isBoard ? null : h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Pages', title: 'Pages', onClick: openDrawer }, icon('pages', 22, 1.8));
-  const addBtn = isBoard ? null : h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Add page', title: 'Add page', onClick: () => addPage() }, icon('plus', 23, 2));
-  const undoBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Undo', title: 'Undo', disabled: true, onClick: () => view.undo() }, icon('undo', 22));
-  const redoBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Redo', title: 'Redo', disabled: true, onClick: () => view.redo() }, icon('redo', 22));
-  const moreBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'More', title: 'More', onClick: openMore }, icon('more', 23));
+  const pagesBtn = isBoard ? null : h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Pages', title: 'Pages', onFast: openDrawer }, icon('pages', 22, 1.8));
+  const addBtn = isBoard ? null : h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Add page', title: 'Add page', onFast: () => addPage() }, icon('plus', 23, 2));
+  const undoBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Undo', title: 'Undo', disabled: true, onFast: () => view.undo() }, icon('undo', 22));
+  const redoBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'Redo', title: 'Redo', disabled: true, onFast: () => view.redo() }, icon('redo', 22));
+  const moreBtn = h('button', { class: 'bar-btn', type: 'button', 'aria-label': 'More', title: 'More', onFast: openMore }, icon('more', 23));
 
   const topBar = h('header', { class: 'ed-top glass' },
     h('div', { class: 'ed-top-row' },
@@ -84,8 +88,9 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
         pagesBtn, addBtn, isBoard ? null : h('span', { class: 'bar-sep', 'aria-hidden': 'true' }), undoBtn, redoBtn, moreBtn)));
 
   const imagePicker = filePicker('image/*');
+  const colors = colorMemory(app);   // saved + recent colours, shared by the tool options and the lasso's colour picker
   const toolbar = createToolbar({
-    saved: app.settings.tools, recent: app.settings.recentColors,
+    saved: app.settings.tools, colors,
     getView: () => view,
     onInsertImage: insertImage,
     onPersist: partial => app.updateSettings(partial),
@@ -93,12 +98,12 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
 
   // Zoom pill
   const zoomLabel = h('span', { class: 'zoom-label-text' }, '100%');
-  const zoomOut = h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Zoom out', onClick: () => { view.zoomBy(1 / 1.25); syncZoom(); } }, icon('minus', 20, 2.2));
-  const zoomIn = h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Zoom in', onClick: () => { view.zoomBy(1.25); syncZoom(); } }, icon('plus', 20, 2.2));
-  const zoomReset = h('button', { class: 'pill-btn zoom-label', type: 'button', 'aria-label': isBoard ? 'Reset zoom' : 'Fit page to width', title: isBoard ? 'Reset view' : 'Fit to width', onClick: () => { view.resetView(); syncZoom(); } }, zoomLabel);
+  const zoomOut = h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Zoom out', onFast: () => { view.zoomBy(1 / 1.25); syncZoom(); } }, icon('minus', 20, 2.2));
+  const zoomIn = h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Zoom in', onFast: () => { view.zoomBy(1.25); syncZoom(); } }, icon('plus', 20, 2.2));
+  const zoomReset = h('button', { class: 'pill-btn zoom-label', type: 'button', 'aria-label': isBoard ? 'Reset zoom' : 'Fit page to width', title: isBoard ? 'Reset view' : 'Fit to width', onFast: () => { view.resetView(); syncZoom(); } }, zoomLabel);
   const magnifyBtn = isBoard ? null : h('button', {
     class: 'pill-btn pill-btn--magnify', type: 'button', 'aria-label': 'Magnify to 300% for detail', title: 'Magnify for detail', 'aria-pressed': 'false',
-    onClick: () => {
+    onFast: () => {
       if (view.getZoom() >= 2.9) view.fitWidth(); else view.setZoom(3, { animate: true });
       syncZoom();
     },
@@ -108,10 +113,10 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
 
   // Pager (notebooks)
   const pagerLabel = h('span', { class: 'pager-label' });
-  const prevBtn = isBoard ? null : h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Previous page', onClick: () => goTo(index - 1) }, icon('chevronLeft', 21, 2.3));
-  const nextBtn = isBoard ? null : h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Next page', onClick: () => (index >= doc.pageIds.length - 1 ? addPage() : goTo(index + 1)) });
+  const prevBtn = isBoard ? null : h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Previous page', onFast: () => goTo(index - 1) }, icon('chevronLeft', 21, 2.3));
+  const nextBtn = isBoard ? null : h('button', { class: 'pill-btn', type: 'button', 'aria-label': 'Next page', onFast: () => (index >= doc.pageIds.length - 1 ? addPage() : goTo(index + 1)) });
   const pager = isBoard ? null : h('div', { class: 'ed-pill ed-pager glass', role: 'group', 'aria-label': 'Page navigation' },
-    prevBtn, h('button', { class: 'pill-btn pager-mid', type: 'button', 'aria-label': 'Show all pages', onClick: openDrawer }, pagerLabel), nextBtn);
+    prevBtn, h('button', { class: 'pill-btn pager-mid', type: 'button', 'aria-label': 'Show all pages', onFast: openDrawer }, pagerLabel), nextBtn);
 
   const bottom = h('div', { class: 'ed-bottom' }, h('div', { class: 'ed-bottom-slot' }), pager, h('div', { class: 'ed-bottom-slot ed-bottom-slot--end' }, zoomPill));
 
@@ -145,13 +150,17 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
     if (magnifyBtn) magnifyBtn.setAttribute('aria-pressed', String(z >= 2.9));
   }
 
-  function updateInsets() {
-    if (!view) return;
+  function measureInsets() {
     const c = canvasEl.getBoundingClientRect();
-    if (!c.width) return;
+    if (!c.width) return null;
     const top = Math.max(0, Math.round(toolbar.el.getBoundingClientRect().bottom - c.top + 8));
     const bottomInset = Math.max(0, Math.round(c.bottom - zoomPill.getBoundingClientRect().top + 8));
-    view.setInsets({ top, right: 0, bottom: bottomInset, left: 0 });
+    return { top, right: 0, bottom: bottomInset, left: 0 };
+  }
+  function updateInsets() {
+    if (!view) return;
+    const i = measureInsets();
+    if (i) view.setInsets(i);
   }
 
   // ---------------------------------------------------------------- saving
@@ -186,10 +195,17 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   function scheduleThumb(delay = THUMB_DEBOUNCE) {
     thumbDirty = true;
     clearTimeout(thumbTimer);
+    if (cancelIdleThumb) { cancelIdleThumb(); cancelIdleThumb = null; }
     thumbTimer = setTimeout(() => {
       if (destroyed) return;
       if (view.isBusy() || dirty) { scheduleThumb(1000); return; }
-      thumbNow();
+      // Rendering a thumbnail takes ~100 ms on a full page: wait for an idle moment, and look again before starting.
+      cancelIdleThumb = idle(() => {
+        cancelIdleThumb = null;
+        if (destroyed || !thumbDirty) return;
+        if (view.isBusy() || dirty) { scheduleThumb(1000); return; }
+        thumbNow();
+      });
     }, delay);
   }
 
@@ -215,7 +231,15 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
     if (loading || document.visibilityState === 'hidden') { saveNow(); return; }
     if (saveState !== 'Saving…') setSaveState('Saving…');
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE);
+    saveDeferred = 0;
+    saveTimer = setTimeout(saveSoon, SAVE_DEBOUNCE);
+  }
+
+  /** Saving copies every item on the page (a few ms on a full page): never do that under a moving pen or finger.
+   *  Waits for the pointer to lift, but at most ~2.5 s (hide / page turn / leave still save immediately). */
+  function saveSoon() {
+    if (view && view.isBusy() && saveDeferred < 10) { saveDeferred++; saveTimer = setTimeout(saveSoon, 220); return; }
+    saveNow();
   }
 
   /** Swap the engine to `next`. The engine first commits any open text edit of the old page (→ onChange → saveNow). */
@@ -232,6 +256,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
     view = new CanvasView(canvasEl, {
       mode: isBoard ? 'board' : 'page',
       page,
+      insets: measureInsets(),
       background: isBoard ? (doc.background || 'dots') : undefined,
       onChange,
       onViewChange: v => {
@@ -247,6 +272,8 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
         }
       },
       onToolRequest: tool => toolbar.setActive(tool),
+      // Lasso → Colour → More…: the same picker as the pen's, anchored to the selection menu.
+      onPickColor: ({ color, rect, apply }) => openColorPicker(rect, { color, memory: colors, title: 'Selection colour', onPick: apply }),
       onPencilTextBox: () => {
         // One-time tip the first time a Pencil writing box opens.
         if (app.settings.scribbleTipSeen) return;
@@ -270,7 +297,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   loading = true;
   try {
     view.resetView();
-    const saved = await store.getViewState(page.id);
+    const saved = savedView;
     if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) && saved.zoom > 0) {
       if (isBoard) view.setView(saved);
       else { const fit = view.getView(); if (saved.y > fit.y) view.setView({ x: fit.x, y: saved.y, zoom: fit.zoom }); }
@@ -318,7 +345,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   function slide(snap, dir) {
     if (!snap) return;
     stage.append(snap);
-    const opts = { duration: 380, easing: EASE_OUT };
+    const opts = { duration: 220, easing: EASE_OUT };   // input is paused while the page slides: keep it short
     // The engine maps pointers through the container's bounding rect, which moves with the slide: ignore input
     // until the page has settled rather than putting ink in the wrong place.
     canvasEl.style.pointerEvents = 'none';
@@ -349,7 +376,8 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
     page = next;
     index = i;
     clearTimeout(thumbTimer); thumbDirty = false;
-    if (!skipOldSave && oldThumbDirty && oldSaved.id === old.id) lastSave.then(() => thumbNow(oldSaved)).then(() => { if (drawer) drawer.refresh(); });
+    // The old page's thumbnail is not needed for what happens next: render it when the browser is idle, not during the page turn.
+    if (!skipOldSave && oldThumbDirty && oldSaved.id === old.id) lastSave.then(() => new Promise(r => idle(r, 3000))).then(() => thumbNow(oldSaved)).then(() => { if (drawer) drawer.refresh(); });
     slide(snap, d);
     setSaveState('');
     syncZoom();

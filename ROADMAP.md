@@ -26,7 +26,7 @@ A free, unlimited, offline-first handwriting notes app for students. It runs in 
 - [x] Tools: pen (pressure-sensitive), highlighter, eraser (whole stroke or precise), lasso (move/recolour/duplicate/delete), text boxes, image insert
 - [x] Colour palette + custom colours, 3 quick sizes per tool
 - [x] Undo/redo (buttons, two-finger tap undo, keyboard shortcuts)
-- [x] Apple Pencil: pressure, palm rejection ("Pencil only" drawing mode, auto-enabled when a Pencil is detected)
+- [x] Apple Pencil: pressure, palm rejection, optional "Pencil only" drawing mode
 - [x] Light and dark mode
 - [x] Export page as PNG, export notebook as a real PDF (built in-app, shared to Files/AirDrop)
 - [x] Backup and restore everything as one file
@@ -44,13 +44,38 @@ A free, unlimited, offline-first handwriting notes app for students. It runs in 
 - [x] Bundled handwriting font for text boxes (Patrick Hand, works offline)
 - [x] Settings → Smart ink switches for auto shapes and auto-tidy
 
-### v1.2 — Polish
+### v1.2 — Pens & colour (released)
+- [x] Brush library: Pen, Fineliner, Ballpoint, Fountain pen, Brush pen, Marker, Pencil HB, Mechanical pencil, Charcoal
+- [x] Highlighters: Chisel (flat angled tip), Round, Pastel; still drawn beneath ink, still snap straight when held
+- [x] Graphite and charcoal grain made in the app (no image files), fixed to the page, sharp at 1000%
+- [x] Each brush remembers its own colour and size; live brush previews; size slider with a preview dot
+- [x] Bigger palettes (ink, pastel, deep, highlighter), My colours (up to 24), recent colours (last 8)
+- [x] Custom colour picker (saturation/brightness square, hue bar, hex code) that works with finger and Pencil
+- [x] Lasso → Colour → More… recolours a selection with the same picker
+- [x] Faster ink for fingers and Pencil (see below)
+
+#### What changed to make drawing feel instant
+Measured with a benchmark (3,000-point stroke on a page that already holds 2,000 strokes) before and after:
+- The line ends **under the finger**. Before, smoothing left the tip about 8 px behind a fast finger (3.5 px behind
+  the Pencil). Now the tip is drawn to the pointer's true position, plus the browser's predicted next position
+  where it offers one. Predicted points are never saved.
+- The first dot is drawn **inside the touch event**, not one frame later.
+- A stroke is drawn **incrementally**: finished parts are painted once and only a small rectangle around the tip is
+  repainted. Engine time per frame fell from 0.36 ms to 0.19 ms and no longer grows with the stroke's length.
+- Fingers get lighter smoothing than the Pencil (new strokes only; old notes look exactly as before).
+- The page is measured once per touch, not on every movement.
+- Pinch on a busy page moves the picture you already have and redraws sharply when you stop (frame gaps fell from
+  35 ms to 21 ms in the software-rendered test browser).
+- Autosave waits for the finger or Pencil to lift.
+- Menus, page turns and opening a notebook animate in 170 to 240 ms instead of 280 to 620 ms.
+
+### v1.3 — Polish
 - Page templates: music staves, graph paper with axes, isometric dots
 - Folders / subjects for notebooks (e.g. Economics, Geography, Politics)
 - Favourite pens bar
 - Two-stroke arrowheads, dashed lines
 
-### v1.3 — Study features
+### v1.4 — Study features
 - Search handwriting titles / text boxes
 - Flashcard pages
 - PDF import (annotate past papers and mark schemes)
@@ -73,4 +98,4 @@ A free, unlimited, offline-first handwriting notes app for students. It runs in 
 5. Opus ran iPad-sized browser tests with synthetic Apple Pencil input, fixed visual issues, and released.
 
 ## Not yet verified on a real iPad
-Keyboard raising for text boxes, Pencil pressure/hover, safe areas, and the share sheet were tested in an emulated iPad only. Pencil-to-text relies on iPadOS Scribble, which no emulator provides: follow the checklist in the README on a real iPad. Hold-to-snap timing and auto-tidy pauses were tuned with synthetic pen input. Please report anything odd via GitHub Issues.
+Keyboard raising for text boxes, Pencil pressure/hover, safe areas, and the share sheet were tested in an emulated iPad only. Pencil-to-text relies on iPadOS Scribble, which no emulator provides: follow the checklist in the README on a real iPad. Hold-to-snap timing and auto-tidy pauses were tuned with synthetic pen input. Drawing latency in v1.2 was measured in a desktop browser with synthetic touches; how it feels under a real finger and Pencil (and whether Safari's predicted touches help) needs the README's drawing-feel checklist on an iPad. Please report anything odd via GitHub Issues.

@@ -7,7 +7,7 @@ import { mountEditor } from './ui/editor.js';
 import * as store from './store.js';
 import { ensureHandFont } from './canvas/fonts.js';
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const root = document.getElementById('app');
 const settingsListeners = new Set();
 let current = null;           // the mounted view: {name, leave(), ...}
@@ -88,7 +88,7 @@ function playOpenFx(fx) {
     { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, borderRadius: '14px', opacity: 0.4 },
     { opacity: 1, offset: 0.25 },
     { left: '0px', top: '0px', width: '100vw', height: '100vh', borderRadius: '0px', opacity: 1 },
-  ], { duration: 380, easing: EASE_OUT, fill: 'forwards' });
+  ], { duration: 240, easing: EASE_OUT, fill: 'forwards' });
   return { el, grown };
 }
 
@@ -136,7 +136,7 @@ async function doRoute() {
   ed.el.style.visibility = '';
   current = ed;
   if (anim) {
-    await animate(anim.el, [{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: 'ease-out', fill: 'forwards' });
+    await animate(anim.el, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-out', fill: 'forwards' });
     anim.el.remove();
   }
 }
