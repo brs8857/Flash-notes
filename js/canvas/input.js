@@ -43,6 +43,12 @@ export class Input {
     on(r, 'pointerleave', (e) => { if (e.pointerType !== 'touch' && !this.action) view.eraser.hide(); });
     on(r, 'touchstart', (e) => { if (this._isCanvas(e.target) || this._handleOf(e.target)) e.preventDefault(); }, { passive: false });
     on(r, 'touchmove', (e) => { if (!this._isText(e.target)) e.preventDefault(); }, { passive: false });
+    const lifted = (e) => { if (e.touches && e.touches.length === 0 && (this.touches.size || this.pinch || this.residual)) this._resetTouches(); };
+    on(r, 'touchend', lifted, { passive: true });
+    on(r, 'touchcancel', lifted, { passive: true });
+    on(window, 'touchend', lifted, { passive: true });
+    on(window, 'touchcancel', lifted, { passive: true });
+    on(document, 'visibilitychange', () => { if (document.visibilityState === 'hidden') this._resetTouches(); });
     on(r, 'wheel', (e) => this._wheel(e), { passive: false });
     on(r, 'gesturestart', (e) => this._gesture(e, 'start'), { passive: false });
     on(r, 'gesturechange', (e) => this._gesture(e, 'change'), { passive: false });
@@ -52,7 +58,7 @@ export class Input {
     on(r, 'dragstart', (e) => e.preventDefault());
     on(window, 'keydown', (e) => this._key(e));
     on(window, 'keyup', (e) => { if (e.key === ' ') this._setSpace(false); });
-    on(window, 'blur', () => this._setSpace(false));
+    on(window, 'blur', () => { this._setSpace(false); this._resetTouches(); });
   }
 
   destroy() {
@@ -158,8 +164,22 @@ export class Input {
     this._capture(e);
   }
 
+  /** Forget every finger: pan/pinch/residual/tap state. Used when events were lost (keyboard opened, system gesture,
+   *  tool switch) so a ghost finger can never turn the next single touch into a two-finger pinch. */
+  _resetTouches() {
+    if (this.action && this.action.type === 'touch') this._finish(true);
+    this.touches.clear();
+    this.ignored.clear();
+    const had = !!(this.pinch || this.residual);
+    this.pinch = this.residual = this.seq = null;
+    if (had) this.view.settleZoom();
+  }
+
   _touchDown(e, p, handle) {
     const v = this.view, t = now();
+    // The first finger of a new gesture is always `isPrimary`. If we still think fingers are down, a pointerup/cancel
+    // was lost: start clean instead of treating this finger as the second of a pinch (which only pans and never draws).
+    if (e.isPrimary && (this.touches.size || this.pinch || this.residual)) this._resetTouches();
     if (this.penId !== null) { this.ignored.add(e.pointerId); return; } // palm while writing
     // Scribble: the Pencil writes into the textarea without us seeing a pen-down (penId stays null), so a
     // resting palm must not close the box. Fingers work again once the Pencil has been away for 2 s.
@@ -277,6 +297,8 @@ export class Input {
     this.action = null;
     if (a) a.cancel(commit);
   }
+
+  resetTouches() { this._resetTouches(); }
 
   /** Public: commit whatever the active pointer is doing (tool switch mid-stroke). */
   finishAction() { if (this.action) this._finish(true); }

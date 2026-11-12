@@ -110,7 +110,7 @@ export function openSettings(app, { onDataChanged } = {}) {
   const body = h('div', { class: 'settings' },
     group('Appearance', null, h('div', { class: 'row row--seg' }, themeSeg)),
     group('Drawing', 'With Pencil-only on, your fingers scroll and zoom and only Apple Pencil draws. It switches on by itself the first time a Pencil touches the page.',
-      row({ iconName: 'pencilOnly', tint: '#4C6EF5', title: 'Pencil-only drawing', control: toggle(!!s.pencilOnly, 'Pencil-only drawing', v => app.updateSettings({ pencilOnly: v })) }),
+      row({ iconName: 'pencilOnly', tint: '#4C6EF5', title: 'Pencil-only drawing', control: toggle(!!s.pencilOnlyUser, 'Pencil-only drawing', v => app.updateSettings({ pencilOnlyUser: v })) }),
       row({ iconName: 'undo', tint: '#868E96', title: 'Two-finger tap to undo', control: toggle(s.twoFingerUndo !== false, 'Two-finger tap to undo', v => app.updateSettings({ twoFingerUndo: v })) })),
     group('Smart ink', 'Hold the pen still at the end of a stroke to snap a shape at any time. Every change is one undo step, and “Keep original” puts your own ink back.',
       row({ iconName: 'sparkle', tint: '#9C36B5', title: 'Auto shapes', sub: 'Lines, arrows, axes, circles and boxes straighten when you lift the pen',

@@ -156,6 +156,7 @@ export class CanvasView {
     if (!TOOLS.includes(tool) || tool === this.tool) return;
     this.textEdit.commit();
     this.input.finishAction();              // switching mid-stroke keeps the stroke
+    this.input.resetTouches();              // a tool switch is a clean slate for fingers (no ghost-pinch state)
     this.smart.toolChanged();
     if (tool !== 'lasso') this.selection.clear();
     this.eraser.hide();

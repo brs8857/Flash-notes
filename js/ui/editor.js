@@ -240,9 +240,10 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
       },
       onHistory: s => { undoBtn.disabled = !s.canUndo; redoBtn.disabled = !s.canRedo; },
       onPencilDetected: () => {
-        if (app.settings.pencilOnly === undefined) {
-          app.updateSettings({ pencilOnly: true });
-          toast('Apple Pencil detected — fingers now scroll. Change in ⋯', { icon: 'pencilOnly', duration: 5000 });
+        // Never switch fingers off on our own: palm rejection already works while the Pencil is down.
+        if (!app.settings.pencilTipSeen) {
+          app.updateSettings({ pencilTipSeen: true });
+          toast('Apple Pencil detected — palm rejection is on. Want fingers to scroll only? Turn on Pencil-only in ⋯', { icon: 'pencilOnly', duration: 6000 });
         }
       },
       onToolRequest: tool => toolbar.setActive(tool),
@@ -259,7 +260,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
     throw err;
   }
 
-  view.setPencilOnly(!!app.settings.pencilOnly);
+  view.setPencilOnly(!!app.settings.pencilOnlyUser);
   view.setTwoFingerUndo(app.settings.twoFingerUndo !== false);
   view.setToolOptions('pen', { autoShapes: app.settings.autoShapes !== false, autoTidy: app.settings.autoTidy !== false });
   toolbar.applyTo(view);
@@ -283,7 +284,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   ro.observe(topBar); ro.observe(toolbar.el); ro.observe(bottom); ro.observe(el);
 
   offs.push(app.onSettings(s => {
-    view.setPencilOnly(!!s.pencilOnly);
+    view.setPencilOnly(!!s.pencilOnlyUser);
     view.setTwoFingerUndo(s.twoFingerUndo !== false);
     view.setToolOptions('pen', { autoShapes: s.autoShapes !== false, autoTidy: s.autoTidy !== false });   // turning auto-tidy off also drops any pending tidy
   }));
@@ -502,14 +503,14 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
 
   function openMore() {
     view.commitPending();
-    const pencilOnly = !!app.settings.pencilOnly;
+    const pencilOnly = !!app.settings.pencilOnlyUser;
     openMenu(moreBtn, [
       isBoard
         ? { label: 'Background', icon: 'paper', onSelect: openBackgroundSheet }
         : { label: 'Paper', icon: 'paper', onSelect: () => openPaperSheet() },
       { label: 'Insert image', icon: 'image', onSelect: insertImage },
       { label: 'Pencil-only drawing', checked: pencilOnly, onSelect: () => {
-        app.updateSettings({ pencilOnly: !pencilOnly });
+        app.updateSettings({ pencilOnlyUser: !pencilOnly });
         toast(!pencilOnly ? 'Pencil-only on: fingers scroll and zoom' : 'Pencil-only off: fingers can draw', { icon: 'pencilOnly' });
       } },
       { separator: true },
