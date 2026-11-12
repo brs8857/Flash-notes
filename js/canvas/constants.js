@@ -25,6 +25,7 @@ export const FONT_STACKS = {
   serif: 'ui-serif, "New York", Georgia, serif',
   mono: 'ui-monospace, "SF Mono", Menlo, monospace',
   round: 'ui-rounded, "SF Pro Rounded", system-ui',
+  hand: '"FN Hand", "Patrick Hand", ui-rounded, "SF Pro Rounded", cursive',   // bundled, see css/canvas.css
 };
 export const LINE_HEIGHT = 1.35;      // × fontSize
 export const MIN_FONT_SIZE = 16;      // iOS zooms the page when focusing inputs below 16px
@@ -36,3 +37,5 @@ export const WORLD_LIMIT = 50000;     // board coordinates are clamped to ±this
 export const PAGE_MARGIN = 24;        // screen px kept around a notebook page
 export const MAX_CANVAS_PIXELS = 12e6; // both on-screen canvases combined (Safari memory cap)
 export const HISTORY_LIMIT = 200;
+export const HOLD_MS = 500, HOLD_PX = 2;   // hold still this long / within this many screen px → snap (pen shapes, highlighter line)
+export const PEN_BOX_W = 420;         // width of a Pencil writing box (world units)

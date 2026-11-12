@@ -10,6 +10,8 @@ import { distPointSeg, distSegSeg, round2 } from './geom.js';
 import { newId } from './constants.js';
 
 const PEN_OPTS = { thinning: 0.6, smoothing: 0.5, streamline: 0.45 };
+// Recognised shapes (`uniform` strokes): constant width, no pressure, corners not rounded off.
+const SHAPE_OPTS = { thinning: 0, smoothing: 0.5, streamline: 0, simulatePressure: false, last: true };
 const pathCache = new WeakMap();
 
 /** Closed, smoothed Path2D from a perfect-freehand outline polygon. */
@@ -48,6 +50,14 @@ export function penPath(points, size, sim, last) {
   return outlineToPath(outline);
 }
 
+/** Crisp constant-width outline for a recognised shape (live preview and committed stroke use the same call). */
+export function shapePath(points, size) {
+  if (points.length < 2) return penPath(points, size, true, true);
+  let outline;
+  try { outline = getStroke(points, { size, ...SHAPE_OPTS }); } catch { outline = []; }
+  return outlineToPath(outline);
+}
+
 /** Constant-width centre line for the highlighter (stroked by the renderer). */
 export function highlighterPath(points) {
   const path = new Path2D();
@@ -72,7 +82,8 @@ export function highlighterPath(points) {
 export function strokePath(item) {
   let p = pathCache.get(item);
   if (!p) {
-    p = item.tool === 'highlighter' ? highlighterPath(item.points) : penPath(item.points, item.size, item.sim, true);
+    p = item.tool === 'highlighter' ? highlighterPath(item.points)
+      : item.uniform ? shapePath(item.points, item.size) : penPath(item.points, item.size, item.sim, true);
     pathCache.set(item, p);
   }
   return p;

@@ -112,6 +112,11 @@ export function openSettings(app, { onDataChanged } = {}) {
     group('Drawing', 'With Pencil-only on, your fingers scroll and zoom and only Apple Pencil draws. It switches on by itself the first time a Pencil touches the page.',
       row({ iconName: 'pencilOnly', tint: '#4C6EF5', title: 'Pencil-only drawing', control: toggle(!!s.pencilOnly, 'Pencil-only drawing', v => app.updateSettings({ pencilOnly: v })) }),
       row({ iconName: 'undo', tint: '#868E96', title: 'Two-finger tap to undo', control: toggle(s.twoFingerUndo !== false, 'Two-finger tap to undo', v => app.updateSettings({ twoFingerUndo: v })) })),
+    group('Smart ink', 'Hold the pen still at the end of a stroke to snap a shape at any time. Every change is one undo step, and “Keep original” puts your own ink back.',
+      row({ iconName: 'sparkle', tint: '#9C36B5', title: 'Auto shapes', sub: 'Lines, arrows, axes, circles and boxes straighten when you lift the pen',
+        control: toggle(s.autoShapes !== false, 'Auto shapes', v => app.updateSettings({ autoShapes: v })) }),
+      row({ iconName: 'pen', tint: '#0C8599', title: 'Auto-tidy handwriting', sub: 'Gently straightens and evens each line once you move on',
+        control: toggle(s.autoTidy !== false, 'Auto-tidy handwriting', v => app.updateSettings({ autoTidy: v })) })),
     a2hs,
     group('Storage', 'Notes never leave this device. There are no accounts and no servers, so the only limit is your device’s free space.',
       usageRow, persistRow),
@@ -122,7 +127,7 @@ export function openSettings(app, { onDataChanged } = {}) {
       h('div', { class: 'about-icon', 'data-squircle': '15' }),
       h('div', { class: 'about-name' }, 'Flash Notes'),
       h('div', { class: 'about-text' }, 'Free forever. No account, no ads, no limits. Made by students, for students.'),
-      h('div', { class: 'about-meta' }, `Version ${app.version} · handwriting powered by perfect-freehand (MIT)`)));
+      h('div', { class: 'about-meta' }, `Version ${app.version} · handwriting powered by perfect-freehand (MIT) · Patrick Hand font (OFL)`)));
 
   const sheet = openSheet({ title: 'Settings', body, size: 'md', doneLabel: 'Done', className: 'sheet--grouped', onClose: () => picker.destroy() });
   refreshStorage();

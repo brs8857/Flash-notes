@@ -4,6 +4,7 @@
   "js/canvas/draw.js",
   "js/canvas/engine.js",
   "js/canvas/eraser.js",
+  "js/canvas/fonts.js",
   "js/canvas/geom.js",
   "js/canvas/history.js",
   "js/canvas/images.js",
@@ -12,9 +13,13 @@
   "js/canvas/paper.js",
   "js/canvas/render.js",
   "js/canvas/selection.js",
+  "js/canvas/shapes.js",
+  "js/canvas/smartink.js",
   "js/canvas/strokes.js",
   "js/canvas/text.js",
   "js/canvas/textedit.js",
+  "js/canvas/tidy.js",
   "js/canvas/viewport.js",
+  "vendor/fonts/patrick-hand-latin-400-normal.woff2",
   "vendor/perfect-freehand.js"
 ]

@@ -5,6 +5,7 @@ import { MIN_FONT_SIZE, TEXT_DEFAULT_W, newId } from './constants.js';
 import { round2, bboxContains } from './geom.js';
 import { strokeBBox, distToStroke } from './strokes.js';
 import { layoutText } from './text.js';
+import { SHAPE_KINDS } from './shapes.js';
 
 const fin = Number.isFinite;
 
@@ -42,6 +43,9 @@ export function normalizeItems(raw) {
         size: fin(it.size) && it.size > 0 ? it.size : 3, points,
       };
       if (it.sim) item.sim = true;
+      // Recognised shapes (v1.1): keep the crisp rendering flag and the kind, nothing else.
+      if (item.tool === 'pen' && it.uniform === true) item.uniform = true;
+      if (item.tool === 'pen' && it.shape && SHAPE_KINDS.includes(it.shape.kind)) item.shape = { kind: it.shape.kind };
     } else if (it.type === 'text') {
       if (!fin(it.x) || !fin(it.y)) continue;
       item = {

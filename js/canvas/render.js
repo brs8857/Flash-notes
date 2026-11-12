@@ -3,9 +3,10 @@
 import { PAGE_W, PAGE_H, HIGHLIGHT_ALPHA } from './constants.js';
 import { bboxIntersects, bboxOfItems } from './geom.js';
 import { drawStroke } from './strokes.js';
-import { drawText } from './text.js';
+import { drawText, resetTextLayout } from './text.js';
 import { decodeImage } from './images.js';
 import { normalizeItems } from './items.js';
+import { ensureHandFont, handReady, usesHandFont } from './fonts.js';
 import { paperFill, isDarkPaper, displayColor, drawPaperRules, drawBoardBackground } from './paper.js';
 
 /**
@@ -72,6 +73,12 @@ async function decodeAll(items) {
   return map;
 }
 
+/** Pages with handwriting-font text wait for the font (other pages never do), then lay out afresh. */
+async function fontsFor(page) {
+  if (handReady() || !usesHandFont(page?.items)) return;
+  if (await ensureHandFont()) resetTextLayout();
+}
+
 function prepItems(page) {
   let copy;
   try { copy = structuredClone(page?.items || []); } catch { copy = JSON.parse(JSON.stringify(page?.items || [])); }
@@ -83,6 +90,7 @@ function prepItems(page) {
  * @returns {Promise<HTMLCanvasElement>}
  */
 export async function renderPageToCanvas(page, opts = {}) {
+  await fontsFor(page);
   const items = prepItems(page);
   const images = await decodeAll(items);
   const want = opts.width ? opts.width / PAGE_W : (opts.scale || 1);
@@ -110,6 +118,7 @@ export async function renderPageToCanvas(page, opts = {}) {
  * @returns {Promise<HTMLCanvasElement>}
  */
 export async function renderBoardToCanvas(page, opts = {}) {
+  await fontsFor(page);
   const items = prepItems(page);
   const images = await decodeAll(items);
   const pad = opts.padding ?? 40;

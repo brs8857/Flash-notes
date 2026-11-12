@@ -11,11 +11,16 @@
 //   strokes.js   perfect-freehand outlines, Path2D cache, erase maths
 //   text.js      layoutText (single source of wrapping) items.js     normalise / transform / hit-test
 //   images.js    decoded image LRU    history.js  undo stack    viewport.js  clamp/fit maths
+//   smartink.js  auto shapes / auto-tidy / "Keep original" pill (owns their timers)
+//   shapes.js    shape recognition (pure)   tidy.js  handwriting tidy (pure)   fonts.js  handwriting font
 
 import {
   PAGE_W, PAGE_H, PAPER_STYLES, PAPER_COLORS, BOARD_BACKGROUNDS, INK_COLORS, HIGHLIGHT_COLORS,
   FONT_STACKS, MIN_FONT_SIZE, PAGE_MARGIN, MAX_CANVAS_PIXELS, HIGHLIGHT_ALPHA, newId,
 } from './constants.js';
+import { SmartInk } from './smartink.js';
+import { ensureHandFont, handReady, onLateHandFont } from './fonts.js';
+import { resetTextLayout } from './text.js';
 import { round2, bboxOfItems, bboxIntersects } from './geom.js';
 import { drawStroke } from './strokes.js';
 import { usableRect, clampZoom, snapZoom, clampView, fitWidthZoom } from './viewport.js';
@@ -110,6 +115,7 @@ export class CanvasView {
     this._frame = this._frame.bind(this);
 
     // --- tools ---
+    this.smart = new SmartInk(this);
     this.selection = new Selection(this);
     this.textEdit = new TextEditor(this);
     this.draw = new DrawTool(this);
@@ -135,6 +141,11 @@ export class CanvasView {
 
     this._setPage(opts.page);
     this.resize();
+    // Defensive: the app also starts this at boot. Text laid out before the font arrived is redone.
+    if (!handReady()) {
+      const redo = () => this._handFontReady();
+      ensureHandFont().then((ok) => { if (ok) redo(); else if (!this.destroyed) this._unlate = onLateHandFont(redo); });
+    }
   }
 
   // =================================================================================================
@@ -145,6 +156,7 @@ export class CanvasView {
     if (!TOOLS.includes(tool) || tool === this.tool) return;
     this.textEdit.commit();
     this.input.finishAction();              // switching mid-stroke keeps the stroke
+    this.smart.toolChanged();
     if (tool !== 'lasso') this.selection.clear();
     this.eraser.hide();
     this.tool = tool;
@@ -161,6 +173,7 @@ export class CanvasView {
     if (opts.eraseMode === 'stroke' || opts.eraseMode === 'area') o.eraseMode = opts.eraseMode;
     else if (opts.eraseMode === 'precise') o.eraseMode = 'area';
     if (typeof opts.font === 'string' && FONT_STACKS[opts.font]) o.font = opts.font;
+    if (tool === 'pen') this.smart.setOptions(opts);   // {autoShapes, autoTidy}: booleans only
     if (tool === 'text') this.textEdit.setOptions({ color: opts.color, size: opts.size && o.size, font: opts.font && o.font });
   }
 
@@ -197,6 +210,7 @@ export class CanvasView {
   load(page) {
     if (this.destroyed) return;
     // Finish work on the OLD page first (fires onChange with the old pageId).
+    this.smart.cancel();
     this.textEdit.commit();
     this.input.abortAll(false);
     this.stopAnimations();
@@ -321,6 +335,8 @@ export class CanvasView {
   destroy() {
     if (this.destroyed) return;
     this._commitPending();
+    this.smart.destroy();
+    if (this._unlate) this._unlate();
     this.destroyed = true;
     this.stopAnimations();
     this.input.destroy();
@@ -367,6 +383,7 @@ export class CanvasView {
   /** Ask the app to switch tool; falls back to switching directly when the app does not listen. */
   requestTool(tool) {
     if (tool === this.tool) return;
+    if (tool !== 'pen') this.smart.cancel();
     if (typeof this.opts.onToolRequest === 'function') {
       try { this.opts.onToolRequest(tool); } catch (err) { console.error(err); }
     } else this.setTool(tool);
@@ -382,6 +399,7 @@ export class CanvasView {
     if (!skipRedraw) this.invalidate();
     if (!cmd.removed.length && !cmd.added.length) return false;
     this.history.push(cmd);
+    this.smart.onCommit(reason);
     this._emitHistory();
     this._emitChange(reason);
     return true;
@@ -395,10 +413,10 @@ export class CanvasView {
    * ones of their own kind) it is painted straight onto the committed bitmap instead of re-rendering the
    * whole scene. Anything uncertain falls back to the full redraw.
    */
-  addStroke(item) {
+  addStroke(item, reason = 'stroke') {
     const fast = this._canPaintStroke(item);
     if (fast) this._paintStroke(item);
-    const changed = this.commit(this.items, this.items.concat([item]), 'stroke', fast);
+    const changed = this.commit(this.items, this.items.concat([item]), reason, fast);
     if (fast) this._flush();   // clear the live stroke in the same task as the bitmap update (no double-darkened frame)
     return changed;
   }
@@ -501,6 +519,7 @@ export class CanvasView {
       color: PAPER_COLORS[page?.paper?.color] ? page.paper.color : 'white',
     };
     this.root.dataset.paper = this.paper.color;
+    this.smart.pageChanged();
     this.items = normalizeItems(clone(Array.isArray(page?.items) ? page.items : []));
     this.history.clear();
     this.selection.clear();
@@ -530,6 +549,7 @@ export class CanvasView {
 
   _timeTravel(dir) {
     if (this.destroyed || this.input.action || this.input.pinch) return;
+    this.smart.cancel();
     this.textEdit.commit();
     const next = dir === 'undo' ? this.history.undo(this.items) : this.history.redo(this.items);
     if (!next) return;
@@ -545,6 +565,27 @@ export class CanvasView {
     if (this.destroyed) return;
     this.input.finishAction();
     this.textEdit.commit();
+    this.smart.cancel();            // never tidy in the background
+  }
+
+  /** The handwriting font arrived after text was measured with the fallback: measure again. Display-only
+   *  (stored data has no layout), so no history entry and no onChange; items keep their identity. */
+  _handFontReady() {
+    if (this.destroyed) return;
+    resetTextLayout();
+    const fix = (it) => {
+      if (!it || it.type !== 'text' || it.font !== 'hand') return;
+      const f = finalizeItem(it);
+      it.h = f.h; it.bbox = f.bbox;
+    };
+    this.items.forEach(fix);
+    for (const cmd of [...this.history.undoStack, ...this.history.redoStack]) {
+      for (const [, it] of cmd.removed) fix(it);
+      for (const [, it] of cmd.added) fix(it);
+    }
+    this.textEdit.relayout();
+    if (this.selection.has()) this.selection.set([...this.selection.ids]);
+    this.invalidate();
   }
 
   _emitChange(reason) {
@@ -574,6 +615,7 @@ export class CanvasView {
   _syncOverlay() {
     this.selection.sync();
     this.textEdit.sync();
+    this.smart.sync();
   }
 
   _readTheme() {
@@ -699,6 +741,7 @@ export class CanvasView {
     this._worldTransform(ctx);
     const a = this.draw.renderLive(ctx);
     const b = this.selection.renderLive(ctx);
-    this._liveHas = a || b;
+    const c = this.smart.renderLive(ctx);
+    this._liveHas = a || b || c;
   }
 }

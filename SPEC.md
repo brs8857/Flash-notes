@@ -475,3 +475,265 @@ its ResizeObserver, so it keeps working after rotation/Split View.
 - 2026-11-11: UI: iOS input ≥16px, `touch-action:manipulation`, callout/selection off, no `<a>/<img>` cards, `inset:0` not `100dvh`; no `backdrop-filter` inside `filter`/opacity wrappers (glass uses border-radius + box-shadow, not clip-path).
 - 2026-11-11: Whiteboard pages use `paper.color` for fill (style ignored); `setPaper` valid in board mode.
 - 2026-11-11 (review pass): **Commit fast path** — a finished pen/highlighter stroke is painted straight onto the committed bitmap when it cannot change pass order (pen: no text bbox overlaps; highlighter: no text or pen bbox overlaps), otherwise the full redraw still runs. New engine API `commitPending()` (commits an open text box / stroke so `getItems()` is complete; the app calls it before menus, exports and the page drawer). Zoom within 0.2% of a hard limit snaps onto it (UI reads exactly 1000% / 10%). Store: `putPage` never re-creates a page that is no longer in its doc's `pageIds`; new atomic `patchDoc(id, fields)` replaces read-modify-`putDoc` for title/paper/background/cover; `saveSettings` merges synchronously (no lost keys).
+
+---
+
+# v1.1 — Shape recognition, Tidy ink, Pencil-to-text (spec by Opus, 2026-11-11; reviewed 2026-11-11)
+
+Goal: messy drawing becomes neat without the student thinking about it, and it never destroys work —
+every conversion is **one undo step** and offers a one-tap "keep my original".
+Everything runs **on-device, offline, no network, no new runtime deps** (except one bundled OFL font).
+
+**Global rules (apply to A, B, C):**
+- New engine state lives in one controller, `js/canvas/smartink.js` (`class SmartInk`, owned by `CanvasView` as `view.smart`),
+  which holds ALL timers, the pending-ink list, the pill and the morph effect. It exposes `cancel()` (clear timers, pill,
+  pending list, effects) and is called from: `load()` (before `textEdit.commit()`), `destroy()` (before `destroyed = true`),
+  `_commitPending()` (pagehide/hidden: cancel, never tidy in the background), `undo/redo`, `requestTool()` away from pen.
+  Every timer callback must first check `view.destroyed` and a `pageSeq` captured when it was armed (`_setPage` increments it).
+- Stroke items are immutable and tracked **by object identity** (`view.items.includes(item)`); never by id. Any `commit()` whose
+  reason is not `'stroke'`/`'shape'`/`'tidy'` (erase, delete, move, colour, text, undo/redo, insert) clears the pending list.
+- **"Keep original" is in-memory only** (no `raw` field in stored data): the pill closure holds `{added:[newItems], removed:[originalItems]}`.
+  Tapping it does `view.commit(items, items.map(replace added→original), 'keep-original')` (a new history entry; undo returns to the
+  converted version). The pill hides (and the closure is dropped) on: 3 s, any canvas pointerdown (NOT a pointerdown on the pill
+  itself), any commit with another reason, undo/redo, `load`, `destroy`, tool change. If any `added` item is no longer in `view.items`
+  by identity, hide the pill instead of acting.
+- Pill DOM sits in `.cv-overlay` as a real `<button>` (`pointer-events:auto`, `aria-live="polite"` label); `input._down` already
+  ignores non-canvas, non-handle targets, so it must not call `preventDefault` for the pill. Reduced motion: no morph, no pop.
+- Persistence: **`normalizeItems` in `js/canvas/items.js` whitelists stroke fields and would silently strip `shape`/`uniform` on
+  every load** (uniform lines would turn into tapered strokes after a reload). Builder MUST extend it: keep `uniform===true` and
+  `shape` as `{kind: <one of the known kinds>}` only (drop anything else). `transformItem` already spreads, so move/resize/colour keep
+  them; store only `kind` (no geometry meta - it goes stale after resize). Also check `js/store.js` / backup import-export validators
+  and add a round-trip test (save → reload → `uniform` still true; backup export → import).
+
+## A. Shape recognition — `js/canvas/shapes.js` (new, pure, Node-testable)
+
+```js
+export function recognizeShape(points /* [[x,y,p],...] world */,
+  opts: { mode:'auto'|'hold', zoom:number, scale?:number /* median pen-stroke bbox diagonal, world, or undefined */ })
+  : null | { kind, confidence /*0..1*/, points /* new [[x,y,p]] */ }
+```
+`recognizeShape` itself applies **all** gates for its `mode` (size, confidence, corner count, curve rejection) and returns `null`
+below them, so the Node tests exercise the real false-positive behaviour. `opts.zoom` is only for the screen-size gate.
+Kinds and output geometry (world units, sampled ~every 2 units, constant pressure 0.5, de-duplicated points):
+- `line` — start→end. Snap to exactly horizontal/vertical within 6°, to 45° within 4°.
+- `arrow` — **only** this single-stroke pattern: shaft to the tip, then a barb (back along ~20–50° off the shaft), back to the tip, the
+  second barb (corner sequence start, tip, b1, tip, b2); each barb 10–35% of the shaft. Two-stroke arrowheads are **out of scope**.
+  Output: clean shaft + symmetric 30° head, head length = clamp(12% of shaft, 10, 40). (In `hold` mode the 3-point form
+  start, tip, b1 is also accepted.)
+- `axes` — an "L" (one stroke, corner at any of the four positions) with corner angle 70–110° and **both arms ≥ 80 units** and each
+  ≥ 35% of the longer arm. Output: a 2-segment polyline with a true 90° corner; axis-aligned if the L is rotated < 12°.
+- `polyline` — open, 2–4 straight segments joined by **localized** corners. Accept only if: every segment is straight
+  (max deviation ≤ 3% of its length), every segment ≥ 50 units, each corner's turning (≥ 25°, ≤ 140°) happens within a window ≤ 15%
+  of the stroke length, and the stroke is **not a zig-zag** (no two consecutive turns > 110° in alternating directions: "N", "Z",
+  "W", "M", cross-out scribbles stay raw). Segments within 6° of horizontal/vertical snap.
+- `circle` / `ellipse` — closed (end within 20% of perimeter of start), total turning 300–450° (a spiral/multi-loop scribble is
+  rejected), ≤ 1 corner. Circle if axis ratio ≥ 0.85 (radius = mean distance), else ellipse, axis-aligned if within 10°.
+- `rectangle` / `square` — closed, 4 corners 75–105°, axis-aligned within 10°, square if sides within 12%.
+- `triangle` — closed, 3 corners.
+- **Curves are never converted**: open strokes with smooth, spread-out curvature (supply/demand curves, S-curves, parabolas, sine
+  waves, bell curves, arcs, loops) return `null`. There is no `arc` kind. `line` requires max perpendicular deviation ≤ **3% of
+  chord** in `auto` (≤ 8% in `hold`, see below); an open stroke with total turning > 25° and no localized corner is a curve → `null`.
+
+Pipeline (standard): resample to N equidistant points → closed/open test → corner detection (ShortStraw / curvature + Douglas–Peucker)
+→ per-kind fit error normalised by size → best kind. Cap input at 4000 points (resample first); must run < 5 ms.
+
+**Gates** (inside `recognizeShape`):
+| | `auto` (on pointerup) | `hold` |
+|---|---|---|
+| size | bbox diag ≥ **90** world (line/arrow/axes/polyline) or ≥ **120** (closed shapes) **and** ≥ `max(…, 4 × opts.scale)` when `scale` is given **and** diag ≥ **100 screen px** (`diag·zoom`) | diag ≥ 40 world and ≥ 40 screen px |
+| confidence | closed ≥ 0.85; line/axes/polyline/arrow ≥ 0.9 | ≥ 0.7 |
+| corners | > 6 detected corners → `null` | same |
+
+(The screen-px and `scale` gates matter: when the student is zoomed out, ordinary handwriting is > 90 *world* units tall.)
+
+**Triggers** (pen tool only; the highlighter keeps ONLY its existing hold-for-straight-line behaviour, unchanged):
+1. **Hold to snap** (always on, any size passing the hold gate): pointer within 2 screen px for ≥ **500 ms** (reuse the existing
+   `HOLD_MS`/`HOLD_PX` constants - one value for pen and highlighter) while down → `recognizeShape(c.pts, {mode:'hold'})`.
+   - Found → the live stroke becomes a live preview of the shape (scale "pop"), `c.snapped = {kind, points}`. **After a snap `_add`
+     must stop appending raw points**: for `line`/`arrow` the end point follows the pointer (re-fit start→pointer with the angle snaps,
+     arrow head re-derived); for every other kind further movement is ignored until pointerup. Lifting commits the shape.
+   - Not found → **do nothing for the pen** (the stroke stays free-form). The existing straight-line fallback is highlighter-only;
+     the old spec text implied pen had one - it does not, and adding one would flatten every curve the student pauses on.
+2. **Auto shapes** (setting `autoShapes`, default **on**): on pointerup of a pen stroke only (one pointer-down→up; not highlighter,
+   eraser, lasso) run `recognizeShape(c.pts, {mode:'auto', zoom, scale})`, where `scale` = median bbox diagonal of the last 30 pen
+   strokes (non-shape) within 600 world units of the stroke, or `undefined`. **Letter-in-word guard:** skip auto conversion if the
+   previous pen stroke ended < 1.5 s ago and its bbox is horizontally within 0.75 × this stroke's diag and 0.5–2× its height
+   (a big "O"/"L" inside a heading stays handwriting). Underlines and cross-out lines are straight `line`s and may be straightened.
+   Convert **before** committing: the raw stroke is never added to `items` - commit only the shape via `addStroke` (fast path is fine,
+   a shape is an ordinary pen stroke).
+
+**Result item**: `{id:newId(), type:'stroke', tool:'pen', color, size, points:<shape points>, shape:{kind}, uniform:true, bbox}`.
+`uniform:true` strokes render with perfect-freehand `thinning:0, simulatePressure:false`: add the flag to the `strokePath` cache key
+path in `strokes.js`/`penPath` (the live preview uses the same options so preview == committed). Area-eraser and lasso treat them as normal strokes.
+
+**Feedback**: on conversion run a ~180 ms morph (raw stroke fading out on the live canvas over the committed shape; the fx layer is
+owned by `SmartInk` and cancelled by `cancel()`, new pointerdown, load, destroy), plus the glass pill above the shape:
+"◯ Circle · Keep original" (labels: Line, Arrow, Axes, Lines, Circle, Ellipse, Rectangle, Square, Triangle). Engine exposes
+`setToolOptions('pen', { autoShapes:boolean, autoTidy:boolean })` (extend the existing function; ignore non-boolean values).
+
+## B. Tidy ink — `js/canvas/tidy.js` (pure, Node-testable) + the auto trigger in `smartink.js`
+
+```js
+export function tidyStrokes(strokes /* pen strokes, plain items */, opts:{ paper?:{style}, mode:'manual'|'auto', bounds?:[x0,y0,x1,y1],
+                            obstacles?:[bbox] /* text/image/shape bboxes: strokes overlapping them are left alone */ })
+  : { strokes /* same length & order as input; new items with NEW ids; untouched strokes returned as the same object */, changed:boolean }
+```
+Makes handwriting neater **while keeping it the student's handwriting** (no recognition). Never changes `size`, `color`, `tool`, `sim`.
+1. **Group** into lines of writing: cluster by vertical overlap of bboxes, then split each cluster wherever the horizontal gap between
+   consecutive strokes > 4× median stroke height (a diagram label next to text is its own group). A group is tidied only if it has
+   **≥ 4 strokes** and width ≥ 4× median height; single labels ("D₁", "Q", axis names, tally marks, hatching) are untouched. Drop
+   strokes taller than 3× the median height, strokes with `shape`/`uniform`, strokes overlapping `obstacles`.
+2. **Baseline**: robust linear fit through stroke bottoms/lower envelope → rotate the line about its left end to horizontal. Cap rotation
+   at ±8°. On `lined`/`narrow`/`cornell` paper snap the baseline to the nearest rule if within 40% of rule spacing.
+3. **Words**: split by gaps > 0.6× median letter height → even word spacing toward the median gap.
+4. **Size**: scale each word about its baseline-left toward the line's median x-height (blend 60%, clamp 0.8–1.25).
+5. **Slant**: estimate from near-vertical sub-segments, shear toward the median slant (blend 70%, clamp ±15°). Do not force upright.
+6. **Smooth**: resample + light Chaikin/moving-average (preserve corners via angle threshold), smooth pressure too.
+Limits: no point moves > 25 units (if exceeded, scale the whole line's transform down proportionally, don't clip); in page mode
+clamp results to `bounds` (page rect), skipping a group that would leave it. **Idempotent**: a second pass over its own output must
+return `changed:false` (changed = any point moved > 1.5 units or baseline > 0.5°). The engine builds the new item array by mapping
+`items → replacement` **in place** (z-order and indices preserved), `finalizeItem` on each, ONE `view.commit(items, next, 'tidy')`.
+Strength is **gentle**: it should look like a careful version of the same writing.
+
+**Triggers**:
+- **Manual**: lasso menu (selection.js) gains **"✨ Tidy"** (shown when the selection contains ≥ 1 pen stroke) → `tidyStrokes` on the
+  selected pen strokes, one history entry, morph (not for > 300 strokes), selection re-set to the NEW ids, pill "✨ Tidied · Keep original".
+  If nothing changed, button shows "Already neat" for 1 s and makes no history entry.
+- **Auto-tidy** (setting `autoTidy`, default **on**). `SmartInk` records each committed pen stroke (not shape/highlighter, bbox height
+  < 120 world) in `pending` (identity list). Tidy runs, over the pending strokes **except the line the pen is on**, when either:
+  (a) a pen-down lands on a **new line** - `y > currentLine.baselineY + 1.2 × median stroke height` (on lined paper: in a different
+  rule band) and not inside any pending stroke's bbox +16 units. The pen-down only *arms* the tidy: it runs in a 0-ms timeout after
+  that new stroke's pointerup (never during the stroke, so the first stroke on the new line has no redraw hitch, and the new stroke is
+  not in the snapshot taken at pen-down); or
+  (b) the pen has been idle (up, **no Pencil hover `pointermove` and no pointerdown**) for **4 s** - this is the only path that
+  tidies the last line; hover/any pen event restarts the timer. (1.2 s of the original spec was shorter than a normal pause to think
+  and would shift ink under a student who resumes the same line.)
+  At fire time, if `view.isBusy()` or `input.busy` or `selection.has()` or lasso/eraser active or `textEdit.active` or the tool is not
+  pen: **re-arm 1 s** (don't drop), and cancel entirely if the pending list was cleared. Prune `pending` to items still in
+  `view.items` first. One history entry per auto-tidy (⌘Z undoes only the tidy), no morph animation (just the redraw), small pill
+  "✨ Tidied · Keep original". Auto-tidy never touches text/images or strokes overlapping them.
+  The tidy `commit` uses the normal path → `onChange({reason:'tidy'})` → editor autosave: no new autosave code, but the editor's
+  `onChange` must treat unknown reasons as dirty (it does).
+
+## C. Pencil-to-text (Scribble) + neat handwriting font
+
+### C1. What iPadOS Scribble needs, and the exact changes
+Scribble is handled by the system text-input layer, not by pointer events: it works when the Pencil lands on a **visible,
+focused-or-focusable editable element (`<textarea>`/`<input>`/`contenteditable`)** and nothing between Pencil and element swallows the
+touch. The current code already gets several things right (keep them): `input._down` returns early for a `textarea` target (no
+`preventDefault`, no `setPointerCapture`, no `penId`); `touchstart` is only `preventDefault`ed for canvas/handle targets;
+`touchmove` and `selectstart` exempt `textarea`; the textarea has `user-select:text`. Required changes:
+1. **Palm rejection must not close the box.** While the pen writes into the textarea, `penId` is null (the early return), so a resting
+   palm/hand (touch pointerdown on the canvas, even in pencil-only mode, which goes through `_begin`) calls `textEdit.commit()` and
+   kills the box mid-sentence. Fix in `input.js`: record `lastPen = now()` and `this.penNear` on **every** pen `pointerdown`/`pointermove`
+   whose target is inside the root (incl. the textarea and Pencil hover); in `_touchDown`, `if (textEdit.active && now() - lastPen < 2000) { ignored.add(id); return; }`
+   (touches are fully ignored, no commit, no pan). Finger taps still commit when the Pencil has been away > 2 s.
+2. **Writing must be allowed to start slightly outside the text**: a pen-down on the bare canvas commits (and discards, if empty) the
+   box. Make the editable area bigger than the text with real padding: for a **pen-created box** style the textarea
+   `box-sizing:content-box; padding:P; margin:-P` with `P = 28 / zoom` world units (so 28 screen px), and set the minimum height
+   `minH = max(2 × lineHeight, 96 / zoom)` as `c.minH` used for `ta.style.height` and the frame (`c.h = max(layoutH, minH)`), while
+   the committed item's `h`/bbox still come from `layoutText` only. Text origin must not move (margin cancels padding) - add a test.
+   The move/width handles must sit outside the padded rect (they `preventDefault` + capture on pen-down and would steal the Pencil).
+   Place the new box so the tap point is inside the first line **and ≥ 28 screen px from the box's left/top edge**.
+3. **Do not** add `inputmode="none"`, `readonly`, `-webkit-user-modify`, `pointer-events:none`, `user-select:none`, or `contenteditable`
+   to the textarea or its wrapper (`.cv-text-edit` must stay `pointer-events:auto`). Keep `autocorrect/autocapitalize/spellcheck` off.
+   No full-screen element (frame, glass, pill, toast) may overlap the textarea rect; `.cv-text-frame` stays `pointer-events:none`.
+4. `root` `contextmenu` handler: add the `_isText` exemption (long-press/Scribble "select" menus) like `selectstart`.
+5. **Do not rely on programmatic focus alone.** Keep the synchronous `ta.focus({preventScroll:true})` inside the pen `pointerup`
+   (iOS raises the keyboard only from a gesture), but Scribble also works on an unfocused textarea, so the box must be hit-testable
+   immediately. If the on-screen keyboard appears and covers the page when the Pencil is used, keep the existing `kbInset` logic;
+   do not add a fallback UI. `touch-action:none` on `.cv-root` is inherited by intersection and cannot be loosened from the child; it
+   does not affect Scribble (verify on device, below).
+6. **In-flight Scribble text**: committing reads `ta.value` synchronously. In `commit()` call `ta.blur()` first, then read `value`
+   (WebKit finishes marked/Scribble composition on blur). If device testing shows lost words when the Pencil taps elsewhere
+   immediately after writing, delay committing by 400 ms for pen-created boxes only (`ta` stays in the DOM).
+7. **Not testable in Playwright**: Scribble needs a real iPad + Pencil. The builder adds `tests/scribble-checklist.md`-style steps to the
+   README (a manual device checklist: tap with text tool + Pencil, write a sentence, pause, check text appears; write starting just
+   left/above the text; rest the palm; scratch-out to delete; Scribble off → box still works with keyboard) and a Playwright test
+   proving: pen `pointerdown` on the textarea is **not** `defaultPrevented`, no pointer capture, a touch pointerdown 300 ms after a pen
+   move does NOT commit the box, and padding doesn't shift the text origin.
+
+### C2. Behaviour
+- **Pencil creates a writing box**: with the **text tool**, a tap with `pointerType==='pen'` (existing `_tap` path; tapping an existing
+  text box still edits it) creates a text box `font:'hand'`, colour = **the pen tool's current colour**, `fontSize = max(24, text size)`,
+  `w = min(420, space to page edge)`, `isNew` with placeholder "Write here with Apple Pencil…" (placeholder only for pen boxes).
+  This does **not** change `toolOpts.text.font`; finger/mouse taps keep the text tool's font. Changing the font in the popover while a box is
+  open applies to it as today (`setOptions`).
+- Text tool options popover (`js/ui/toolbar.js`): font list gains **Handwriting** (key `hand`, rendered in that font).
+- Add `hand` to `FONT_STACKS`: `'"FN Hand", "Patrick Hand", ui-rounded, "SF Pro Rounded", cursive'`. `normalizeItems` already keeps any
+  string font; old app versions fall back to sans.
+- One-time tip toast the first time a Pencil writing box opens (persist `settings.scribbleTipSeen`): "Write with Apple Pencil — iPad turns
+  it into neat text. (Needs Settings › Apple Pencil › Scribble on.)"
+
+### C3. Font loading (Safari/canvas)
+- Bundle OFL **Patrick Hand**: `npm pack @fontsource/patrick-hand` in a scratch dir (not the project), copy the **latin** 400 `woff2`
+  to `vendor/fonts/` plus the OFL text as `vendor/fonts/PatrickHand-OFL.txt`. `@font-face` in `css/canvas.css`:
+  `src:url('../vendor/fonts/<file>.woff2') format('woff2'); font-display:swap; unicode-range` as in fontsource latin.
+  (`../vendor` is correct relative to `css/canvas.css`; do NOT write `vendor/...` or an absolute `/vendor/...`, the app is served from a sub-path.)
+  Characters outside the subset (accents, symbols Scribble may emit) fall back through the stack; layout and the textarea use the same
+  fallback so they still agree.
+- `files.json`/precache: add `vendor/fonts/<file>.woff2` (NOT the licence). The SW precaches by URL and the CSS font request is the same
+  URL, so it is served offline (cache hit ignores request mode). `index.html`: `<link rel="preload" as="font" type="font/woff2" href="vendor/fonts/<file>.woff2" crossorigin>`
+  (without `crossorigin` the preload is fetched twice).
+- **Canvas never triggers a font download.** Add `js/canvas/fonts.js`: `ensureHandFont(): Promise<boolean>` = memoised
+  `document.fonts.load('24px "FN Hand"', 'Aa Hello')` with a 2 s timeout (resolves false on failure/timeout) and a sync flag `handReady`.
+  Kick it off at app boot (`app.js`) and again defensively from `CanvasView` constructor.
+- **`layoutText` caches by item in a WeakMap, so a layout measured with the fallback font stays wrong forever.** Export
+  `resetTextLayout()` from `text.js` (replace the WeakMap) and, when the font becomes ready: `resetTextLayout()`, re-`finalizeItem` every text
+  item with `font==='hand'` (new bbox/h) **without** a history entry or `onChange` (display-only, stored data has no layout), re-run
+  `textEdit._layout()/sync()` if a box is open, `invalidate()`. Also run this whenever a page with `hand` text is loaded while `!handReady`.
+- Thumbnails (`makeThumbnail`), PDF/PNG export and the page drawer renderer must `await ensureHandFont()` before drawing a page containing
+  `hand` text (check items first so other pages don't wait). Pages are never blocked on the font for normal drawing.
+- The textarea picks the face up via CSS and swaps automatically; verify canvas text vs textarea baseline alignment for `hand` within 1 px
+  (Playwright pixel check in Chromium).
+
+## D. App wiring (Builder owns js/ui too this time)
+- Settings sheet: new group **"Smart ink"**: toggles **Auto shapes** (`settings.autoShapes`) and **Auto-tidy handwriting**
+  (`settings.autoTidy`), each with a one-line explanation. Defaults are **`s.autoShapes !== false`** / **`s.autoTidy !== false`** everywhere
+  (existing users have neither key; same pattern as `twoFingerUndo`). Persist via `app.updateSettings`; apply to the live editor in
+  `editor.js` next to the existing `setPencilOnly/setTwoFingerUndo` blocks (initial set at ~L256 AND the settings-changed handler at ~L279):
+  `view.setToolOptions('pen', {autoShapes, autoTidy})`. Turning `autoTidy` off calls `view.smart.cancel()` pending tidy (no stray tidy later).
+- Optional: pen options popover row "Shapes: Auto / Hold only".
+- `js/canvas/files.json` lists new files (shapes.js, tidy.js, smartink.js, fonts.js, the woff2). `sw.js`: **`const VERSION = 'v2'`** (cache name
+  becomes `fln-v2`; do not edit the `'fln-'` prefix logic). README + ROADMAP: document the features and the manual Scribble checklist.
+- Data model additions are optional stroke fields (`shape:{kind}`, `uniform`); old pages load unchanged; backups round-trip them (see Global rules).
+
+## E. Tests the builder must write and pass
+- `tests/shapes.test.mjs` (Node, **seeded PRNG** e.g. mulberry32 so failures reproduce): noisy strokes (jitter 2–4% of size, varied speeds,
+  non-uniform sample spacing) for every kind incl. L-axes in 4 orientations, kinked polyline, 4-segment arrows, plus **≥ 40 negatives**
+  that `mode:'auto'` must NOT convert (0 false positives above the size gates; ≥ 90% recall on shapes): handwriting generated from
+  glyph paths ("e","a","o","l","the", cursive loops, short underlines); **large (≥ 90 unit) letters "O","L","Z","N","W","M","7","V" as
+  the last glyph of a word (letter-in-word guard)**; **smooth supply/demand curves (down- and up-sloping, 3 curvatures), S-curve,
+  parabola, sine wave, bell curve, arcs, spirals**; zig-zag cross-outs; hatching; dashed lines. Also assert the zoom-out case
+  (handwriting 100 world units tall at zoom 0.3 is not converted). Print a confusion table.
+  `hold` mode: straight-ish line, circle, rectangle convert; a smooth curve returns null.
+- `tests/tidy.test.mjs` (Node): slanted, wavy, uneven line of ≥ 6 words → baseline angle < 1° after tidy, word-height CV reduced,
+  no point moved > 25 units, stroke count & order preserved, diagrams / `shape` strokes / < 4-stroke labels / strokes overlapping an
+  obstacle returned as the **same object**, idempotent (second pass `changed:false`), page `bounds` respected.
+- Browser checks (Playwright, harness in /home/claude/tools): draw a wobbly circle, square, L-axes, kinked demand curve, a smooth
+  demand curve (stays raw), and a line of small "handwriting" on lined paper → screenshots; "Keep original" restores; undo/redo
+  consistent (one entry per conversion; no raw stroke in history); autosave persists `shape`/`uniform` **across reload**; settings toggles
+  disable both features immediately; `load(otherPage)` with a pending tidy → no tidy happens on either page and no timer fires after
+  `destroy()` (spy on `setTimeout` leftovers / `view.smart` pending = 0); tidy while a lasso selection or text box is open is deferred;
+  pen hold on a curve does not flatten it; highlighter hold-to-line unchanged.
+- Scribble-related Playwright checks listed in C1.7; device checklist in the README.
+
+## v1.1 review
+- 2026-11-11 Global: added `SmartInk` controller owning all timers/pending list/pill/fx with a single `cancel()` called from load/destroy/_commitPending/undo/redo/tool change; page-sequence guard on timers (timers surviving destroy/page swap).
+- 2026-11-11 Global: dropped stored `raw`; "Keep original" is an in-memory closure + new history entry with identity checks (simpler, no page bloat, undo/redo consistent).
+- 2026-11-11 Global: found that `normalizeItems` (items.js) whitelists stroke fields and would strip `shape`/`uniform` on reload; mandated the fix, store only `shape.kind`, and a reload/backup round-trip test.
+- 2026-11-11 A: pen had no straight-line assist (it is highlighter-only); the old "fall back to straight line" would flatten every curve the student pauses on -> pen does nothing if unrecognised; after a snap `_add` stops appending raw points; one `HOLD_MS` (500).
+- 2026-11-11 A: false positives - moved gates into `recognizeShape` (modes auto/hold), added screen-px and local-scale gates (zoomed-out handwriting exceeds 90 world units), letter-in-word guard, curve rejection (<=3% chord deviation), zig-zag/cross-out rejection, min arm/segment lengths, arrow single-stroke pattern pinned down, spiral rejection; expanded negative corpus (smooth demand curves etc.) and seeded PRNG.
+- 2026-11-11 B: auto-tidy trigger redefined (idle 4 s with no hover; new-line pen-down only arms tidy and runs after that stroke's pointerup); busy -> re-arm not drop; grouping gates (>=4 strokes, horizontal gap split, obstacles) so labels/diagrams/text-overlays are untouched; in-place item replacement (z-order), page-bounds clamp, rotation cap, idempotence, selection re-set on new ids.
+- 2026-11-11 C1: Scribble section rewritten with exact changes: palm touches were committing the box (penId null for textarea pen events) -> touch ignored while Pencil active; real textarea padding for writing outside the text; no inputmode/user-modify/readonly; contextmenu exemption; blur-before-commit; manual device checklist since Playwright cannot test Scribble.
+- 2026-11-11 C3: fonts - `ensureHandFont()` with explicit `document.fonts.load` (canvas never triggers a download), `resetTextLayout()` because layoutText's WeakMap caches fallback-font layouts, re-finalize text bboxes without history, await before thumbnails/exports, preload with `crossorigin`, `../vendor/fonts` URL, latin subset + fallback stack, licence not precached.
+- 2026-11-11 D: defaults as `!== false` for existing users, exact editor.js wiring points, sw.js `VERSION='v2'` (cache `fln-v2`), pen text colour = pen tool colour, pen box does not change `toolOpts.text.font`.
+
+## v1.1 builder notes (contract changes made while building)
+- 2026-11-12 Engine opts: new optional callback `onPencilTextBox()` fired when a Pencil writing box opens (the app shows the one-time Scribble tip; the engine cannot toast).
+- 2026-11-12 `recognizeShape` opts gained `prev?: {bbox, dt}` (previous raw pen stroke) so the letter-in-word guard is applied, and Node-tested, inside the recogniser; `inWordGuard`, `lineShape`, `arrowShape`, `SHAPE_KINDS`, `SHAPE_LABELS` are also exported. The guard only counts a previous stroke that stayed raw (a shape drawn just before does not block the next shape). Result may carry `start` (anchor for the hold-follow of a line/arrow).
+- 2026-11-12 Shapes: zig-zag rejection uses 95° (spec 110°, stricter); slim ellipses (axis ratio down to 0.25) are accepted on fit quality even though their tips look like corners; closed shapes are validated by the tangent winding of the closed loop (one turn) instead of the raw stroke's total turning; the local `scale` only samples handwriting-sized strokes (bbox height < 120) and needs ≥ 5 of them, so a page of big raw curves does not switch auto shapes off.
+- 2026-11-12 Tidy: corrections are projections with hysteresis (outer trigger band → inner target band) instead of fixed 60/70% blends, so tidy writing is left alone; the baseline pivot slides from the left end towards the middle when a left pivot would swing the far end more than 11 units; the 25-unit limit trims size/slant/spacing first and only then the straightening; `tidy.js` remembers its own results by object identity (WeakSet, `markTidied`) so a second pass over its output is exactly a no-op without storing any marker in the page. Auto mode skips a line sloping more than 8°; lines whose bottoms do not hug one baseline are skipped.
+- 2026-11-12 Auto-tidy: each stroke gets one automatic chance (the snapshot leaves the pending list whether or not its group was tidied). `HOLD_MS`/`HOLD_PX` moved to `constants.js`. `addStroke(item, reason = 'stroke')`.
+- 2026-11-12 `sw.js` VERSION is `'v3'` (v2 was taken by the home-screen redesign).
+

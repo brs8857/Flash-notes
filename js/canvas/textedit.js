@@ -2,13 +2,17 @@
 // zoom (its computed font-size therefore never drops below 16px, so iOS does not zoom the page on
 // focus). Committed text is drawn on the canvas by text.js using the same layout.
 
-import { PAGE_W, PAGE_H, LINE_HEIGHT, MIN_FONT_SIZE, TEXT_DEFAULT_W, newId } from './constants.js';
+import { PAGE_W, PAGE_H, LINE_HEIGHT, MIN_FONT_SIZE, TEXT_DEFAULT_W, PEN_BOX_W, newId } from './constants.js';
 import { clamp, round2 } from './geom.js';
 import { computeLayout, fontFamily } from './text.js';
 import { finalizeItem, hitTestItems } from './items.js';
 import { displayColor } from './paper.js';
 
 const FRAME_PAD = 8; // screen px between the text and its frame
+// Pencil writing boxes (Scribble): the textarea is padded by PEN_PAD screen px on every side so writing
+// may start a little outside the text, and the frame (with its handles) sits just outside that padding.
+const PEN_PAD = 28, PEN_FRAME_PAD = 32, PEN_MIN_H = 96;
+const PEN_PLACEHOLDER = 'Write here with Apple Pencil…';
 
 export class TextEditor {
   constructor(view) {
@@ -26,7 +30,28 @@ export class TextEditor {
     const hit = hitTestItems(v.items, p.wx, p.wy, 12 / v.view.zoom, ['text']);
     if (hit) { this.open(hit, false); return; }
     if (v.mode === 'page' && !v.inPage(p.wx, p.wy)) return;
-    this.createAt(p.wx, p.wy);
+    if (p.type === 'pen') this.createPenBox(p.wx, p.wy); else this.createAt(p.wx, p.wy);
+  }
+
+  /**
+   * Apple Pencil tapped with the text tool: a roomy writing box in the handwriting font and the pen's
+   * colour, ready for Scribble. The tap point ends up at the start of the first line, PEN_PAD px inside
+   * the editable area. Does not change the text tool's own font.
+   */
+  createPenBox(wx, wy) {
+    const v = this.view, o = v.toolOpts.text;
+    const fontSize = Math.max(24, MIN_FONT_SIZE, o.size);
+    let x = wx, y = wy - (fontSize * LINE_HEIGHT) / 2, w = PEN_BOX_W;
+    if (v.mode === 'page') {
+      x = clamp(x, 8, PAGE_W - 136);
+      w = clamp(PAGE_W - 16 - x, 120, PEN_BOX_W);
+      y = clamp(y, 0, PAGE_H - fontSize * LINE_HEIGHT);
+    }
+    const c = this.open({ id: newId(), type: 'text', x: round2(x), y: round2(y), w, text: '', color: v.toolOpts.pen.color, fontSize, font: 'hand' }, true, true);
+    if (typeof v.opts.onPencilTextBox === 'function') {
+      try { v.opts.onPencilTextBox(); } catch (err) { console.error(err); }
+    }
+    return c;
   }
 
   /** New empty box whose first line is vertically centred on (wx, wy). */
@@ -42,7 +67,7 @@ export class TextEditor {
     this.open({ id: newId(), type: 'text', x: round2(x), y: round2(y), w, text: '', color: o.color, fontSize, font: o.font }, true);
   }
 
-  open(item, isNew) {
+  open(item, isNew, pen = false) {
     this.commit();
     const v = this.view;
     v.selection.clear();
@@ -56,12 +81,13 @@ export class TextEditor {
     ta.setAttribute('aria-label', 'Text box');
     ta.spellcheck = false;
     ta.rows = 1;
-    ta.placeholder = 'Type here';
+    ta.placeholder = pen ? PEN_PLACEHOLDER : 'Type here';
+    if (pen) { wrap.classList.add('cv-text-edit--pen'); ta.classList.add('cv-textarea--pen'); }
     ta.value = item.text || '';
     wrap.appendChild(ta);
 
     const frame = document.createElement('div');
-    frame.className = 'cv-text-frame';
+    frame.className = 'cv-text-frame' + (pen ? ' cv-text-frame--pen' : '');
     const move = document.createElement('div');
     move.className = 'cv-handle cv-handle--move';
     move.dataset.cvHandle = 'text-move';
@@ -72,7 +98,7 @@ export class TextEditor {
     width.setAttribute('aria-label', 'Change text box width');
     frame.append(move, width);
 
-    const c = this.cur = { item: { ...item }, original: item, isNew, wrap, ta, frame };
+    const c = this.cur = { item: { ...item }, original: item, isNew, pen, wrap, ta, frame, pad: 0, minH: 0 };
     if (!isNew) { v.hidden.add(item.id); v.invalidate(); }
     v.overlay.append(frame, wrap);
     this._style();
@@ -105,6 +131,13 @@ export class TextEditor {
     this.sync();
   }
 
+  /** The font arrived (or changed): measure and place the open box again. */
+  relayout() {
+    if (!this.cur) return;
+    this._layout();
+    this.sync();
+  }
+
   _style() {
     const { item, ta } = this.cur;
     ta.style.fontSize = item.fontSize + 'px';
@@ -117,10 +150,20 @@ export class TextEditor {
     const c = this.cur;
     c.item.text = c.ta.value;
     c.wrap.style.width = c.item.w + 'px';
-    let h = computeLayout(c.item).h;
+    if (c.pen) {
+      // Real padding (in world units, so PEN_PAD px on screen) cancelled by a negative margin: the text
+      // origin does not move, but the Pencil can land anywhere in the padded area.
+      const z = this.view.view.zoom;
+      c.pad = PEN_PAD / z;
+      c.minH = Math.max(2 * c.item.fontSize * LINE_HEIGHT, PEN_MIN_H / z);
+      c.ta.style.padding = c.pad + 'px';
+      c.ta.style.margin = -c.pad + 'px';
+    }
+    let h = Math.max(computeLayout(c.item).h, c.minH);
     c.ta.style.height = h + 'px';
-    if (c.ta.scrollHeight > h + 1) { // browser wrapped a line differently: never clip while typing
-      h = c.ta.scrollHeight;
+    const sh = c.ta.scrollHeight - 2 * c.pad;
+    if (sh > h + 1) { // browser wrapped a line differently: never clip while typing
+      h = sh;
       c.ta.style.height = h + 'px';
     }
     c.h = h;
@@ -131,12 +174,13 @@ export class TextEditor {
     const c = this.cur;
     if (!c) return;
     const v = this.view, z = v.view.zoom;
+    if (c.pen && Math.abs(c.pad * z - PEN_PAD) > 0.5) this._layout();      // zoom changed: keep the padding at PEN_PAD px
     const [sx, sy] = v.toScreen(c.item.x, c.item.y);
     c.wrap.style.transform = `translate(${sx}px, ${sy}px) scale(${z})`;
-    const f = c.frame.style;
-    f.transform = `translate(${sx - FRAME_PAD}px, ${sy - FRAME_PAD}px)`;
-    f.width = c.item.w * z + FRAME_PAD * 2 + 'px';
-    f.height = c.h * z + FRAME_PAD * 2 + 'px';
+    const f = c.frame.style, fp = c.pen ? PEN_FRAME_PAD : FRAME_PAD;
+    f.transform = `translate(${sx - fp}px, ${sy - fp}px)`;
+    f.width = c.item.w * z + fp * 2 + 'px';
+    f.height = c.h * z + fp * 2 + 'px';
   }
 
   beginMove(p) {
@@ -178,6 +222,8 @@ export class TextEditor {
     this.cur = null;
     const vv = window.visualViewport;
     if (vv) { vv.removeEventListener('resize', this._onVV); vv.removeEventListener('scroll', this._onVV); }
+    // WebKit finishes marked text / an in-flight Scribble composition on blur: blur first, then read.
+    try { c.ta.blur(); } catch { /* ignore */ }
     const text = c.ta.value;
     c.wrap.remove();
     c.frame.remove();

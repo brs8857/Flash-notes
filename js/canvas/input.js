@@ -12,6 +12,7 @@ const TAP_SLOP = 10;        // px a finger may travel and still count as a tap
 const EARLY_PINCH_MS = 150; // a 2nd finger this soon after the 1st cancels the 1st finger's stroke
 const TWO_FINGER_TAP_MS = 350;
 const PEN_GUARD_MS = 1000;  // no tap-undo this soon after the pencil lifted (resting palm)
+const PEN_TEXT_GUARD_MS = 2000; // touches are ignored this long after the Pencil was last seen while a text box is open
 
 const now = () => performance.now();
 
@@ -27,6 +28,7 @@ export class Input {
     this.penId = null;
     this.penSeen = false;
     this.lastPen = -1e9;
+    this.penNear = false;       // a Pencil has been seen (down, moving or hovering) inside the root
     this.space = false;
     this.gesture = null;        // Safari trackpad pinch
     this.inertiaRaf = 0;
@@ -45,7 +47,7 @@ export class Input {
     on(r, 'gesturestart', (e) => this._gesture(e, 'start'), { passive: false });
     on(r, 'gesturechange', (e) => this._gesture(e, 'change'), { passive: false });
     on(r, 'gestureend', (e) => this._gesture(e, 'end'), { passive: false });
-    on(r, 'contextmenu', (e) => e.preventDefault());
+    on(r, 'contextmenu', (e) => { if (!this._isText(e.target)) e.preventDefault(); });   // Scribble / long-press menus in the text box
     on(r, 'selectstart', (e) => { if (!this._isText(e.target)) e.preventDefault(); });
     on(r, 'dragstart', (e) => e.preventDefault());
     on(window, 'keydown', (e) => this._key(e));
@@ -99,6 +101,8 @@ export class Input {
 
   _down(e) {
     const v = this.view;
+    // Every sign of the Pencil counts (also over the text box, where we otherwise stay out of the way).
+    if (e.pointerType === 'pen') { this.lastPen = now(); this.penNear = true; v.smart.penActivity(); }
     const onCanvas = this._isCanvas(e.target);
     const handleEl = onCanvas ? null : this._handleOf(e.target);
     if (!onCanvas && !handleEl) return; // textarea, menu buttons: leave native behaviour alone
@@ -108,6 +112,7 @@ export class Input {
     const p = this._pt(e);
 
     if (p.type === 'touch') { this._touchDown(e, p, handle); return; }
+    v.smart.pointerDown();
     if (p.type === 'pen') {
       if (!this.penSeen) {
         this.penSeen = true;
@@ -156,6 +161,10 @@ export class Input {
   _touchDown(e, p, handle) {
     const v = this.view, t = now();
     if (this.penId !== null) { this.ignored.add(e.pointerId); return; } // palm while writing
+    // Scribble: the Pencil writes into the textarea without us seeing a pen-down (penId stays null), so a
+    // resting palm must not close the box. Fingers work again once the Pencil has been away for 2 s.
+    if (v.textEdit.active && t - this.lastPen < PEN_TEXT_GUARD_MS) { this.ignored.add(e.pointerId); return; }
+    if (!v.pencilOnly && v.tool !== 'hand') v.smart.pointerDown();
     this.touches.set(e.pointerId, { sx: p.sx, sy: p.sy, x0: p.sx, y0: p.sy, t0: t, moved: false });
     const n = this.touches.size;
     if (n === 1) {
@@ -180,6 +189,7 @@ export class Input {
 
   _move(e) {
     const v = this.view, id = e.pointerId;
+    if (e.pointerType === 'pen') { this.lastPen = now(); this.penNear = true; if (!this.action) v.smart.penActivity(); }
     if (e.pointerType === 'touch') {
       if (this.ignored.has(id)) return;
       const t = this.touches.get(id);

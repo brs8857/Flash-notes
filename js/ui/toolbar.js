@@ -2,7 +2,7 @@
 import { h, clear, debounce, luminance } from './dom.js';
 import { icon } from './icons.js';
 import { openPopover } from './menu.js';
-import { INK_COLORS, HIGHLIGHT_COLORS, SIZES } from '../canvas/constants.js';
+import { INK_COLORS, HIGHLIGHT_COLORS, SIZES, FONT_STACKS } from '../canvas/constants.js';
 
 const TOOLS = [
   { id: 'pen', icon: 'pen', label: 'Pen', options: true },
@@ -18,6 +18,7 @@ const FONTS = [
   { id: 'round', label: 'Round', css: 'var(--font-rounded)' },
   { id: 'serif', label: 'Serif', css: 'var(--font-serif)' },
   { id: 'mono', label: 'Mono', css: 'var(--font-mono)' },
+  { id: 'hand', label: 'Handwriting', css: FONT_STACKS.hand, wide: true },
 ];
 const SIZE_LABELS = ['Small', 'Medium', 'Large'];
 const DOT_PX = [6, 10, 15];
@@ -197,9 +198,9 @@ export function createToolbar({ saved, recent, getView, onInsertImage, onPersist
   }
 
   function segRow(label, options, current, onPick) {
-    const row = h('div', { class: 'opt-seg', role: 'radiogroup', 'aria-label': label });
+    const row = h('div', { class: `opt-seg ${options.some(o => o.wide) ? 'opt-seg--wrap' : ''}`, role: 'radiogroup', 'aria-label': label });
     const btns = options.map(o => h('button', {
-      type: 'button', class: 'opt-seg-btn', role: 'radio', 'aria-checked': String(o.id === current),
+      type: 'button', class: `opt-seg-btn ${o.wide ? 'opt-seg-btn--wide' : ''}`, role: 'radio', 'aria-checked': String(o.id === current),
       style: o.css ? { fontFamily: o.css } : null,
       onClick: () => { btns.forEach(b => b.setAttribute('aria-checked', String(b === btn(o)))); onPick(o.id); },
     }, o.label));
@@ -227,7 +228,7 @@ export function createToolbar({ saved, recent, getView, onInsertImage, onPersist
         segRow('Font', FONTS, state.text.font, f => { state.text.font = f; push('text'); persist(); }),
         sizeRow('text', SIZES.text), h('div', { class: 'opt-divider' }),
         colorRow('text', INK_COLORS, { custom: false }),
-        h('div', { class: 'opt-note' }, 'Tap the page to add a text box.'));
+        h('div', { class: 'opt-note' }, 'Tap the page to add a text box. Tap with Apple Pencil to write: iPad turns your handwriting into neat text.'));
     } else return;
     pop = openPopover(btn, content, { className: 'popover--opts', label: `${t.label} options`, onClose: () => { pop = null; } });
   }

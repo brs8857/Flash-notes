@@ -18,7 +18,10 @@ export function fontString(item) {
   return `${Math.max(MIN_FONT_SIZE, +item.fontSize || MIN_FONT_SIZE)}px ${fontFamily(item.font)}`;
 }
 
-const layoutCache = new WeakMap();
+let layoutCache = new WeakMap();
+
+/** Forget every cached layout (a web font arrived: text measured with the fallback font is stale). */
+export function resetTextLayout() { layoutCache = new WeakMap(); }
 
 /**
  * Wrap an item's text with CSS `white-space: pre-wrap; overflow-wrap: break-word` semantics:

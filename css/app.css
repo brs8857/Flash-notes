@@ -1051,3 +1051,10 @@ h1, h2, p { margin: 0; }
   :root:not([data-theme="light"]) .lib-dock { background: linear-gradient(180deg, rgba(52, 52, 60, 0.78), rgba(26, 26, 30, 0.7)); }
 }
 :root[data-theme="dark"] .lib-dock { background: linear-gradient(180deg, rgba(52, 52, 60, 0.78), rgba(26, 26, 30, 0.7)); }
+
+/* v1.1 smart ink ------------------------------------------------------------------------------------
+   Text options: the font picker wraps so "Handwriting" (shown in the bundled font) gets its own row. */
+.opt-seg--wrap { flex-wrap: wrap; }
+.opt-seg--wrap .opt-seg-btn { flex: 1 1 0; }
+.opt-seg--wrap .opt-seg-btn--wide { flex: 1 0 100%; font-size: 17px; }
+/* end v1.1 smart ink */

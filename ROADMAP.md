@@ -33,13 +33,24 @@ A free, unlimited, offline-first handwriting notes app for students. It runs in 
 - [x] Installable PWA (works offline, home-screen icon, full screen)
 - [x] Hosted free on GitHub Pages
 
-### v1.1 — Polish
+### v1.1 — Smart ink (released)
+- [x] Shape recognition: lines, arrows, axes, kinked lines, circles, ellipses, rectangles, squares, triangles
+- [x] Hold to snap (with a live preview; a line or arrow follows the pen), and auto shapes when the pen lifts
+- [x] Curves are never converted (supply and demand curves stay as drawn)
+- [x] Tidy ink: straightens each line of handwriting, sits it on the rule, evens word size, slant and spacing
+- [x] Auto-tidy when you move to the next line or pause, plus ✨ Tidy in the lasso menu
+- [x] "Keep original" on every conversion, and each one is a single undo step
+- [x] Pencil to text: Apple Pencil + text tool opens a Scribble-ready writing box
+- [x] Bundled handwriting font for text boxes (Patrick Hand, works offline)
+- [x] Settings → Smart ink switches for auto shapes and auto-tidy
+
+### v1.2 — Polish
 - Page templates: music staves, graph paper with axes, isometric dots
 - Folders / subjects for notebooks (e.g. Economics, Geography, Politics)
-- Shape snapping (hold at end of stroke to straighten lines/circles)
 - Favourite pens bar
+- Two-stroke arrowheads, dashed lines
 
-### v1.2 — Study features
+### v1.3 — Study features
 - Search handwriting titles / text boxes
 - Flashcard pages
 - PDF import (annotate past papers and mark schemes)
@@ -62,4 +73,4 @@ A free, unlimited, offline-first handwriting notes app for students. It runs in 
 5. Opus ran iPad-sized browser tests with synthetic Apple Pencil input, fixed visual issues, and released.
 
 ## Not yet verified on a real iPad
-Keyboard raising for text boxes, Pencil pressure/hover, safe areas, and the share sheet were tested in an emulated iPad only. Please report anything odd via GitHub Issues.
+Keyboard raising for text boxes, Pencil pressure/hover, safe areas, and the share sheet were tested in an emulated iPad only. Pencil-to-text relies on iPadOS Scribble, which no emulator provides: follow the checklist in the README on a real iPad. Hold-to-snap timing and auto-tidy pauses were tuned with synthetic pen input. Please report anything odd via GitHub Issues.

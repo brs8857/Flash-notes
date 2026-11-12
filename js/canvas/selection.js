@@ -1,5 +1,5 @@
 // Lasso + selection: freeform lasso, tap-to-select, move, uniform resize, and the floating
-// context menu (Delete · Duplicate · Colour ▸ · Copy / Paste).
+// context menu (Delete · Duplicate · Colour ▸ · Copy · ✨ Tidy / Paste).
 
 import { PAGE_W, PAGE_H, INK_COLORS, newId } from './constants.js';
 import { bboxOfItems, bboxContains, bboxIntersects, pointInPolygon, clamp } from './geom.js';
@@ -236,6 +236,19 @@ export class Selection {
     v.commit(v.items, after, 'recolor');
   }
 
+  /** ✨ Tidy the selected handwriting (one history entry). @returns {boolean} whether anything changed */
+  tidy() {
+    const v = this.view;
+    const before = this.selected();
+    const pens = before.filter((it) => it.type === 'stroke' && it.tool === 'pen');
+    if (!pens.length) return false;
+    const after = v.smart.tidy(pens, { auto: false });
+    if (!after) return false;
+    const swap = new Map(pens.map((it, i) => [it, after[i]]));
+    this.set(before.map((it) => (swap.get(it) || it).id));     // the selection follows the NEW ids
+    return true;
+  }
+
   copy() {
     const items = this.selected();
     if (!items.length) return false;
@@ -304,6 +317,16 @@ export class Selection {
           setTimeout(() => { if (b.isConnected) { b.textContent = 'Copy'; b.classList.remove('cv-menu-done'); } }, 1100);
         }),
       );
+      if (this.selected().some((it) => it.type === 'stroke' && it.tool === 'pen')) {
+        const tidy = this._button('✨ Tidy', (b) => {
+          if (this.tidy()) return;                       // the menu is rebuilt for the new selection
+          b.textContent = 'Already neat';
+          b.classList.add('cv-menu-done');
+          setTimeout(() => { if (b.isConnected) { b.textContent = '✨ Tidy'; b.classList.remove('cv-menu-done'); } }, 1000);
+        }, 'cv-menu-tidy');
+        tidy.setAttribute('aria-label', 'Tidy handwriting');
+        m.append(tidy);
+      }
     }
     m.hidden = false;
     // Restart the pop-in animation and cache the size (used for positioning on every view change).

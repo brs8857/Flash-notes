@@ -246,6 +246,12 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
         }
       },
       onToolRequest: tool => toolbar.setActive(tool),
+      onPencilTextBox: () => {
+        // One-time tip the first time a Pencil writing box opens.
+        if (app.settings.scribbleTipSeen) return;
+        app.updateSettings({ scribbleTipSeen: true });
+        toast('Write with Apple Pencil — iPad turns it into neat text. (Needs Settings › Apple Pencil › Scribble on.)', { icon: 'sparkle', duration: 7000 });
+      },
     });
   } catch (err) {
     console.error(err);
@@ -255,6 +261,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
 
   view.setPencilOnly(!!app.settings.pencilOnly);
   view.setTwoFingerUndo(app.settings.twoFingerUndo !== false);
+  view.setToolOptions('pen', { autoShapes: app.settings.autoShapes !== false, autoTidy: app.settings.autoTidy !== false });
   toolbar.applyTo(view);
   updateInsets();
 
@@ -278,6 +285,7 @@ export async function mountEditor(root, app, { docId, pageIndex = 0, hidden = fa
   offs.push(app.onSettings(s => {
     view.setPencilOnly(!!s.pencilOnly);
     view.setTwoFingerUndo(s.twoFingerUndo !== false);
+    view.setToolOptions('pen', { autoShapes: s.autoShapes !== false, autoTidy: s.autoTidy !== false });   // turning auto-tidy off also drops any pending tidy
   }));
   const hide = () => { flush(); saveView.flush(); };
   offs.push(on(document, 'visibilitychange', () => { if (document.visibilityState === 'hidden') hide(); }));

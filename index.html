@@ -22,6 +22,7 @@
   // Apply a forced theme before first paint (the full settings live in IndexedDB).
   try { var t = localStorage.getItem('fln.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
 </script>
+<link rel="preload" as="font" type="font/woff2" href="./vendor/fonts/patrick-hand-latin-400-normal.woff2" crossorigin>
 <link rel="stylesheet" href="./css/tokens.css">
 <link rel="stylesheet" href="./css/canvas.css">
 <link rel="stylesheet" href="./css/app.css">

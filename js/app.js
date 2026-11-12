@@ -5,8 +5,9 @@ import { toast } from './ui/toast.js';
 import { mountLibrary } from './ui/library.js';
 import { mountEditor } from './ui/editor.js';
 import * as store from './store.js';
+import { ensureHandFont } from './canvas/fonts.js';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const root = document.getElementById('app');
 const settingsListeners = new Set();
 let current = null;           // the mounted view: {name, leave(), ...}
@@ -200,6 +201,7 @@ function globalGuards() {
 
 async function boot() {
   globalGuards();
+  ensureHandFont();   // handwriting font for text boxes: canvases never trigger the download themselves
   squircleAll();
   try {
     await store.openDB();
