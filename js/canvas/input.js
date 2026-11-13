@@ -130,7 +130,9 @@ export class Input {
     if (e.pointerType === 'pen') { this.lastPen = now(); this.penNear = true; v.smart.penActivity(); }
     const onCanvas = this._isCanvas(e.target);
     const handleEl = onCanvas ? null : this._handleOf(e.target);
-    if (!onCanvas && !handleEl) return; // textarea, menu buttons: leave native behaviour alone
+    // textarea, menu buttons: leave native behaviour alone, except a finger joining a pan/pinch already under way
+    // (a second finger resting on the text box must still zoom the page).
+    if (!onCanvas && !handleEl && !(e.pointerType === 'touch' && this._isText(e.target) && (this.touches.size || this.pinch))) return;
     e.preventDefault();
     v.stopAnimations();
     const handle = handleEl ? handleEl.dataset.cvHandle : null;
@@ -159,9 +161,13 @@ export class Input {
   _begin(e, p, handle, fingerPan) {
     const v = this.view, tool = v.tool;
     let wasEditing = false;
-    if (!(handle && handle.startsWith('text-'))) wasEditing = v.textEdit.commit();
+    // A finger that lands on empty canvas while a text box is open may be the start of a pan or pinch: keep the box
+    // (and keyboard) open and only close it on a real tap. Everything else closes it straight away.
+    const keepOpen = p.type === 'touch' && tool === 'text' && v.textEdit.active && !handle && !v.selection.has();
+    if (!keepOpen && !(handle && handle.startsWith('text-'))) wasEditing = v.textEdit.commit();
     let a = null;
-    if (handle === 'sel-resize') a = v.selection.beginResize(p);
+    if (keepOpen) a = this._tapOrPan(p, () => v.textEdit.commit());
+    else if (handle === 'sel-resize') a = v.selection.beginResize(p);
     else if (handle === 'text-move') a = v.textEdit.beginMove(p);
     else if (handle === 'text-width') a = v.textEdit.beginWidth(p);
     else if (handle) a = null;

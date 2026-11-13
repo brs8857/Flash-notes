@@ -256,7 +256,7 @@ export class TextEditor {
     const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
     v.kbInset = Math.max(0, Math.round(r.bottom - visibleBottom));
     if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
-    this._ensureCaret();
+    if (!v.input.busy) this._ensureCaret();   // never fight the user's own pan / pinch
   }
 
   _ensureCaret() {
