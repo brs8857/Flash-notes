@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Privacy · Flash Notes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/legal.css">
+</head>
+<body>
+<main class="legal">
+<a class="legal-back" href="./">← Back to Flash Notes</a>
+<h1>Your privacy in Flash Notes</h1>
+<p class="lede">Flash Notes is a notes app for students. This page says, in plain English, what we know about you, why, and what you can do about it.</p>
+<p class="muted">Last updated: <span class="fill">[FILL IN: date]</span></p>
+
+<div class="owner-note">
+<p><strong>Note for the owner of this site (delete this box before going live).</strong> This page was drafted to fit UK data protection law (UK GDPR, the Data Protection Act 2018) and the ICO’s Children’s Code. <strong>It is not legal advice.</strong> Everything marked <span class="fill">[FILL IN]</span> is something only you can supply or decide. Read SETUP.md, “Privacy page”, for the list, and have someone who knows data protection read the finished page, because this app is used by under-18s.</p>
+</div>
+
+<div class="card">
+<h2>The short version</h2>
+<ul>
+<li><strong>Your notes are private.</strong> Only you can open them. Nobody else who uses Flash Notes can see them, and there is no way to make a note public or share it.</li>
+<li>We only get your <strong>name</strong> and <strong>email address</strong> from Google, to make your account. Nothing else: not your photo, your contacts, your files or your location.</li>
+<li><strong>No ads. No tracking. No selling data.</strong> There are no analytics or advertising tools in this app at all.</li>
+<li>You can <strong>download</strong> all your notes or <strong>delete your account</strong> and everything in it at any time, in Settings.</li>
+</ul>
+</div>
+
+<h2>Who is responsible</h2>
+<p>The “data controller” (the person or organisation responsible for your information) is <span class="fill">[FILL IN: name of the person or organisation running Flash Notes]</span>.</p>
+<p>Contact: <span class="fill">[FILL IN: contact email address]</span> · <span class="fill">[FILL IN: postal address, if required]</span></p>
+<p>ICO registration number: <span class="fill">[FILL IN: ICO registration number, or state why registration is not required]</span></p>
+
+<h2>What we keep, and why</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>What</th><th>Why we need it</th><th>Where it comes from</th></tr></thead>
+<tbody>
+<tr><td>Your Google account’s ID number (a long number Google uses instead of your name)</td><td>To recognise you when you sign in, so you get <em>your</em> notes</td><td>Google, when you sign in</td></tr>
+<tr><td>Your email address</td><td>To show you which account you are signed in with, and to contact you about your account if we have to</td><td>Google, when you sign in</td></tr>
+<tr><td>Your name (as set in your Google account)</td><td>To show it in Settings</td><td>Google, when you sign in</td></tr>
+<tr><td>Your notes: notebooks, whiteboards, pages, handwriting, text boxes, pictures you add, and cover designs</td><td>To save them and show them on your other devices</td><td>You</td></tr>
+<tr><td>Sign-in records (time of sign-in, and the internet address and browser type it came from)</td><td>To keep accounts secure and stop abuse</td><td>Created automatically by our sign-in provider</td></tr>
+</tbody>
+</table>
+</div>
+<p>That is all. We do <strong>not</strong> collect your profile picture, age or date of birth, school, contacts, location, or anything from your Google account beyond the three things above. Google does send a link to your profile picture when you sign in; the app never asks for it or shows it, and it is removed from our account records shortly after each sign-in.</p>
+<p>The legal reason (“lawful basis”) for using this information is <span class="fill">[FILL IN: lawful basis, for example “it is necessary to provide the service you asked for (UK GDPR Article 6(1)(b))”; confirm with an adviser, especially for users under 18]</span>.</p>
+
+<h2>Where your notes are kept</h2>
+<ul>
+<li><strong>On your device</strong>, inside your browser’s storage, so the app works without internet. Signing out removes them from the device.</li>
+<li><strong>In your account</strong>, in a database run for us by Supabase (see below), in <span class="fill">[FILL IN: Supabase region, for example “London, United Kingdom (eu-west-2)”]</span>. The database is set up so that each row of notes can only be read or changed by the account that owns it.</li>
+</ul>
+<p>Your notes are protected in transit (HTTPS) and stored encrypted on Supabase’s disks. They are <strong>not</strong> end-to-end encrypted, which means the people who run this service could technically open the database. We do not read your notes, and would only access the database to fix a fault, keep the service secure, or if the law required it.</p>
+
+<h2>Who else handles your information</h2>
+<p>We use two companies (“processors”) to run the app. We do not give or sell your information to anyone else.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Company</th><th>What they do for us</th><th>What they handle</th></tr></thead>
+<tbody>
+<tr><td><strong>Supabase</strong> (Supabase, Inc.)</td><td>Runs our sign-in system, database and file storage</td><td>Everything in the table above</td></tr>
+<tr><td><strong>Google</strong> (Google Ireland Limited / Google LLC)</td><td>Confirms who you are when you choose “Sign in with Google”</td><td>Google learns that you signed in to Flash Notes and when. Google never receives your notes.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The app’s own files are served by <span class="fill">[FILL IN: website host, for example “GitHub Pages (GitHub, Inc.)”]</span>, which, like any web host, sees the internet address of devices that load the site.</p>
+
+<h2>Information leaving the UK</h2>
+<p>Your notes are stored in the region named above. Supabase and Google are international companies, so some information (for example sign-in records, or support access by their staff) may be handled outside the UK. Where that happens it is covered by <span class="fill">[FILL IN: transfer safeguard, for example “the UK International Data Transfer Addendum / UK–US data bridge, as set out in Supabase’s Data Processing Addendum”; confirm against the agreements you have accepted]</span>.</p>
+
+<h2>How long we keep it</h2>
+<ul>
+<li><strong>Your account and notes:</strong> until you delete them. If you delete your account, your notes, pictures and profile are deleted from our database straight away.</li>
+<li><strong>Deleted notes:</strong> when you delete a page or notebook its contents are erased at once. A small marker (“this page was deleted”, with no content) is kept for up to 90 days so your other devices delete it too. A picture you remove from a page is taken off the page at once, but its stored file is currently only erased when you delete your account.</li>
+<li><strong>Accounts nobody uses:</strong> <span class="fill">[FILL IN: inactive-account policy, for example “accounts not used for 24 months are deleted after an email warning”, or “we do not delete inactive accounts”]</span>.</li>
+<li><strong>Backups and logs kept by Supabase:</strong> <span class="fill">[FILL IN: backup and log retention for your Supabase plan, for example “database backups are kept for up to 7 days; sign-in logs for up to N days”]</span>. Deleted information can remain in those backups until they expire.</li>
+</ul>
+
+<h2>Your rights</h2>
+<p>Under UK data protection law you can:</p>
+<ul>
+<li><strong>See and take a copy of your information.</strong> Settings → “Download my notes” gives you everything as one file, at any time. “Export as Markdown” gives you your text as a simple document.</li>
+<li><strong>Delete it.</strong> Settings → “Delete my account” erases your account and all your notes, permanently.</li>
+<li><strong>Correct it.</strong> Your name and email come from your Google account; change them there. You can edit your notes at any time.</li>
+<li><strong>Object, or ask us to limit what we do</strong> with your information, or ask any question about it, using the contact details above.</li>
+</ul>
+<p>We will answer within one month. If you are unhappy with how we have handled your information you can complain to the Information Commissioner’s Office (ICO): <strong>ico.org.uk/make-a-complaint</strong> or 0303 123 1113.</p>
+
+<h2>If you are under 18</h2>
+<p>Flash Notes is made for students, so it is built to be safe for young people by default:</p>
+<ul>
+<li>Everything is <strong>private by default</strong>, and there is nothing to switch on that would make it less private. There are no public profiles, no sharing, no messaging, no friends lists and no comments.</li>
+<li>We collect the <strong>smallest amount</strong> of information that makes the app work (see the table above).</li>
+<li>There is <strong>no advertising, no profiling, no tracking and no location data</strong>, and nothing in the app nudges you to give more information or to weaken your privacy.</li>
+<li>You can see, download and delete your own information yourself, without having to ask anyone.</li>
+<li>This page is written to be understood without legal knowledge. If anything is unclear, ask a parent, carer or teacher, or contact us.</li>
+</ul>
+<p>You must be at least <span class="fill">[FILL IN: minimum age, for example 13]</span> years old to make an account. <span class="fill">[FILL IN: what happens for younger children, for example “If you are younger, a parent or carer must agree first” and how that is checked, or “the app is not offered to under-13s”]</span>. You also need a Google account, and Google has its own age rules.</p>
+
+<div class="owner-note">
+<p><strong>For the owner: Children’s Code (Age Appropriate Design Code).</strong> Measures already built into the app: private by default (standard 7); data minimisation, three Google fields only (standard 8); no sharing with third parties beyond the two processors (standard 9); no geolocation (standard 10); no profiling (standard 12); no nudge techniques (standard 13); export and delete tools a child can use alone (standard 15); plain-language transparency on this page and at sign-in (standard 4).</p>
+<p><strong>Decisions left to you:</strong> (1) the minimum age and how you establish age with reasonable certainty (standard 3). The app has no age check: it relies on the Google account. In the UK a child can consent to an online service’s use of their data from age 13; below that, consent must come from someone with parental responsibility. (2) Your lawful basis. (3) Whether you need a Data Protection Impact Assessment: the ICO expects one for services likely to be used by children (standard 2). (4) Retention periods and the inactive-account rule. (5) Whether a school is involved; if a school tells pupils to use this, the school may be a controller too. (6) ICO registration and fee. (7) Accepting Supabase’s Data Processing Addendum and checking its transfer terms.</p>
+</div>
+
+<h2>Cookies and similar storage</h2>
+<p>Flash Notes does not use advertising or tracking cookies. It stores what it strictly needs in your browser: your notes and settings, the app’s files so it works offline, and a sign-in token that keeps you signed in. Signing out removes the token and your notes from the device.</p>
+
+<h2>Changes to this page</h2>
+<p>If we change how we use your information we will update this page and change the date at the top. For important changes we will tell you in the app.</p>
+
+<p><a class="legal-back" href="./">← Back to Flash Notes</a></p>
+</main>
+</body>
+</html>

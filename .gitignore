@@ -1,0 +1,17 @@
+# Secrets: never commit real keys. js/config.js holds only the PUBLIC project URL and anon key.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+supabase/.env
+supabase/.temp/
+supabase/.branches/
+
+# Dev-only tools for the tests
+node_modules/
+tests/node_modules
+tests/node_modules/
+tests/package-lock.json
+
+.DS_Store

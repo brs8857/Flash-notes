@@ -756,3 +756,185 @@ touch. The current code already gets several things right (keep them): `input._d
 - Engine: `opts.insets` (the editor passes its measured insets, so the first draw is the final one) and `resize(true)` in the constructor defer the first paint to the next frame: opening a page redraws once, not twice. `_setPage` no longer structured-clones the page (normalizeItems already builds fresh items).
 - Undo / redo of ≤ 40 items repaints only the changed region (`_drawMain(region)`, clip aligned to device pixels, +2 px) when the main canvas is in sync; otherwise the old full redraw. Region repaint can differ from a full redraw by a few levels (≤ 9/255) on a few pixels (Skia anti-aliasing of partially clipped paths).
 - Popovers reposition when their content grows (ResizeObserver); the colour picker ignores a drag on a zero-size layout, closes the keyboard, ends on `lostpointercapture`, and commits one "recent colour" per burst of arrow keys.
+
+
+---
+
+# Auth & sync v2.0 — contract (2026-11-13)
+
+Owner's decisions: backend **Supabase** (Auth + Postgres + RLS + private Storage), sign-in with **Google only**,
+notes already on a device are **uploaded to the account at the first sign-in**. No build step: supabase-js
+2.119.0 is vendored (`vendor/supabase-js.js`, recipe and hashes in `vendor/README.md`).
+
+## Modes
+- `js/config.js` holds `SUPABASE_URL` / `SUPABASE_ANON_KEY` placeholders. `isConfigured()` false = **local-only
+  mode = exactly v1.2** (no login, no queue rows, no network). True = **account mode**: route guard on.
+- `configProblem()` refuses a `service_role` JWT or `sb_secret_` key.
+
+## Files
+| File | Role |
+|---|---|
+| `js/config.js` | public project URL + anon key, `isConfigured()` |
+| `js/log.js` | masking logger (`log.warn(tag, what, err)`, `mask`, `maskEmail`, `describe`); the only console user in account code |
+| `js/auth/providers.js` | provider table (`google` only): label, scopes, `emailVerified(identityData)` |
+| `js/auth/guard.js` | pure rules: `routeDecision`, `verifyIdentity`, `publicUser`, `classifyAuthError`, `authMessage`, `isAuthFailure`, `readCallback`, `cleanCallbackUrl` |
+| `js/auth/auth.js` | `initAuth()`, `watchSession()`, `signIn(provider)`, `signOut()`, `handleAuthFailure()`, `currentUser()`, `onAuthChange(fn)`, `getClient()` (lazy `import()` of supabase-js) |
+| `js/sync/map.js` | record ↔ row mapping + validation both ways |
+| `js/sync/images.js` | image data URL ↔ `fln-img:<sha256>.<ext>` reference, upload/download |
+| `js/sync/local.js` | IndexedDB side: queue, versions, `applyRow`, first-sign-in backup, `wipeUserData` |
+| `js/sync/remote.js` | supabase-js adapter: `ensureProfile`, `heads`, `bodies`, `push`, `images`, `deleteAccount` |
+| `js/sync/core.js` | engine: `createSync({local, remote}) → {pull, push, syncOnce, verify}` |
+| `js/sync/migrate.js` | `decideAdoption`, `enterAccount`, `eraseAndEnter` |
+| `js/sync/sync.js` | scheduler: `startSync(user)`, `stopSync()`, `pokeSync(ms)`, `syncNow()`, `onSyncStatus`, `onRemoteData` |
+| `js/account.js` | `enter(user)`, `signOutEverywhereHere()`, `deleteAccount()`, `buildMarkdown()` |
+| `js/export-md.js` | `notesToMarkdown(sections)`, `mdEscape` (pure) |
+| `js/ui/login.js`, `js/ui/account.js` | login screen; Account + Your data groups in Settings |
+| `privacy.html` + `css/legal.css` | public privacy page (static, no script) |
+| `supabase/migrations/*.sql`, `supabase/functions/delete-account/index.ts` | database + Edge Function |
+
+## Auth
+- Authorization-code flow with **PKCE** (`flowType: 'pkce'`); state, nonce, ID-token validation, refresh and
+  rotation are supabase-js / Supabase Auth. No hand-written OAuth. `detectSessionInUrl: false`: `initAuth()`
+  reads `?code=` / `?error=` itself (`readCallback`), removes them from the URL **before any await**, then calls
+  `exchangeCodeForSession(code)`.
+- Scopes `openid email profile`, `prompt=select_account`. Redirect = `location.origin + location.pathname`.
+- **Trusted identity** (`verifyIdentity`): exactly one identity, provider in the enabled list, `identity_data.
+  email_verified === true`. Anything else → signed out, error `unverified`. This is UX; the **authority is the
+  database**: `private.account_ok()` (profile built by `ensure_profile()` from `auth.identities`, which users
+  cannot edit) is a RESTRICTIVE policy on `docs`, `pages` and image uploads.
+- **Boot**: the cached session is read straight from `localStorage['fln.auth']` (no supabase-js), so a signed-in
+  user offline reaches their notes at once. `watchSession()` loads supabase-js when idle, refreshes the token and
+  follows `SIGNED_OUT`.
+- **Route guard**: `doRoute()` starts with `guard()`; `routeDecision({configured, user})` → `'login'` mounts
+  `mountLogin` and stops sync. `privacy.html` is a separate static document, so it is public.
+- **401**: `isAuthFailure(err)` → `handleAuthFailure()` = one `refreshSession()`; if refused, `sessionEnded()`:
+  login screen with "sign in again". **Nothing local is deleted** (unsent changes survive).
+- **Sign-out** (`account.signOutEverywhereHere`): final sync if online → `auth.signOut({scope:'local'})` (session
+  removed even offline; refresh token revoked when online) → `wipeUserData()` (docs, pages, thumbs, every `meta`
+  row except `settings`). **Delete account**: Edge Function, then sign-out, then `deleteDatabase`, `localStorage.
+  clear()`, all caches deleted, service worker unregistered, reload.
+- **Adding a provider later**: entry in `providers.js` with its own `emailVerified`; its official button in
+  `login.js`; new migration widening `profiles.provider` and the provider test in `private.sync_profile`; decide
+  explicitly what happens to the "exactly one identity" rule (it is what stops silent merges).
+
+### Session storage trade-off (accepted)
+A static site has no server to set an HttpOnly cookie, so the session (access + refresh token) is in
+`localStorage`, readable by any script running on the origin. Mitigations: strict CSP (`script-src 'self'`, no
+inline, no eval, no third-party origin; `connect-src` = self + the one Supabase project), every third-party
+file vendored and pinned, all user text rendered as text nodes, short access-token life, single-use refresh
+tokens with reuse detection, working sign-out. Residual risk: an XSS on this origin could use the session until
+it is revoked. The stored session object also contains Google's `picture` URL inside `user_metadata` (supabase-js
+stores the user object as received); the app never reads or loads it, and the server copy is stripped by
+`ensure_profile()`.
+
+### CSRF
+There is no cookie-authenticated endpoint anywhere. Every request to Supabase carries `Authorization: Bearer
+<token>` added by supabase-js from `localStorage`; a foreign site cannot make the browser attach it, so
+cross-site request forgery has nothing to ride on. The OAuth redirect is protected by PKCE + state inside
+supabase-js / Supabase Auth. The Edge Function additionally checks `Origin` against `ALLOWED_ORIGINS`.
+
+## Data model (Postgres)
+```
+profiles (id uuid pk default auth.uid() → auth.users on delete cascade, provider 'google', provider_sub,
+          email, email_verified, display_name, created_at, updated_at)
+docs     (owner_id uuid default auth.uid() → auth.users cascade, id text, kind, title ≤ 200,
+          data jsonb ≤ 1 MB {cover, paper, pageIds, background, createdAt}, updated_at bigint ms,
+          deleted bool, rev bigint, server_updated_at)            pk (owner_id, id)
+pages    (owner_id …, id text, doc_id text, data jsonb ≤ 8 MB {paper, items, createdAt},
+          updated_at, deleted, rev, server_updated_at)             pk (owner_id, id)
+private.write_rate (owner_id, bucket, n)                           internal
+storage bucket note-images (private): <auth.uid()>/<sha256>.<jpg|png>, ≤ 8 MB, jpeg/png only
+```
+- RLS **enabled and forced** on all four tables. Policies per command on `(select auth.uid()) = owner_id`, to
+  `authenticated` only; nothing for `anon`; default grants revoked. `owner_id`/`id` immutable (`sync_guard`
+  trigger + WITH CHECK). Profiles: read own, update `display_name` only (column grant).
+- `sync_guard` (BEFORE INSERT/UPDATE): stale write (`new.updated_at < old.updated_at`) is skipped; clock more
+  than 5 min ahead is clamped; tombstone clears `data`/`title`; sets `rev` (sequence) and `server_updated_at`.
+- `quota_guard`: 2,000 docs / 20,000 pages per user. `rate_guard`: 1,200 row writes per user per minute.
+- The client **never sends a user id**: rows carry no `owner_id`; the storage path's first folder must equal
+  `auth.uid()` by policy.
+
+### jsonb vs Storage (decision)
+- **Strokes, text, page settings → `jsonb`** in `pages.data`: kilobytes to a few MB, always read and written
+  whole, the database can bound and shape-check them, and RLS applies with no second system.
+- **Photos placed on a page → private Storage bucket**, content-addressed. A photo is ~0.2–1 MB; inside the
+  jsonb it would be re-uploaded after every stroke on that page. As an immutable object named by its SHA-256 it
+  is uploaded once per account and the page row stays small. No public or signed URLs: downloads use the user's
+  bearer token. On the device the page always holds the real data URL (engine untouched, offline works).
+- **Notebook cover photo stays in `docs.data`** (≤ 1 MB check): small, rarely changes.
+- Known gap: an image removed from a page is not deleted from Storage until the account is deleted (ROADMAP).
+
+## Sync
+- IndexedDB stays the working copy. `js/store.js` writes a queue row `sync:d:<kind>:<id>` `{deleted, at}` in the
+  **same transaction** as every doc/page write (`mark()`; only when `setSyncTracking(true)`), then notifies
+  `onLocalChange`. `putPage` queues the page only (the notebook row is not re-uploaded per stroke).
+- Other `meta` rows: `sync:v:<kind>:<id>` `{u, d, r}` (last agreed version), `sync:i:<name>` (image known
+  uploaded), `sync:state` `{userId, cursors, adoptedAt, verifiedAt, lastSyncedAt, backup, emailHint}`,
+  `backup:local`.
+- Round = `ensure_profile` (once per start) → pull → push → pull again if anything was refused as stale.
+  Pull reads headers `rev > cursor` (first round of a start: from 0, a full compare), fetches bodies only for
+  rows that differ, applies pages → docs → doc tombstones → page tombstones.
+- Scheduling: 2.5 s after a local change, in `idle()`, never while a pointer is down or within 1.2 s of one;
+  ≥ 2 s between rounds; poll every 60 s while visible; on `online` and on becoming visible; exponential backoff
+  5 s → 5 min; ≤ 600 rows/min. Drawing never waits on the network.
+
+### Conflict handling: last write wins per item
+An item = one notebook/whiteboard record, or one page. Times are device clocks (ms).
+| Case | Result |
+|---|---|
+| Different pages edited on two devices | both kept |
+| Same page edited on two devices | the later save wins **whole**; the earlier edit to that page is lost |
+| Page deleted on A, edited later on B | the edit wins; the page is put back in the notebook's page list |
+| Page edited on B, deleted later on A | deleted everywhere |
+| Notebook deleted on A, pages edited (unsent) on B | notebook deleted on B too; those unsent edits are dropped |
+| Page added offline on B, notebook renamed later on A | title from A **and** the new page kept (page-list merge in `applyRow`) |
+| Equal timestamps | the device's unsent change is kept and uploaded; last arrival at the server wins |
+| Device clock far ahead / behind | ahead > 5 min: clamped by the server; behind: its edits lose to newer ones |
+Accepted limits: no merging of strokes inside one page; a page open in the editor is not live-reloaded when
+another device changes it (it reloads on reopening; the next local save wins); settings, thumbnails and view
+positions are per device and not synced.
+
+## First sign-in (local → account)
+`enterAccount(local, userId)`: `decideAdoption({ownerId, userId, localDocs})` → `resume | adopt | fresh |
+conflict`. Adopt = save `backup:local` (full JSON backup) → `markAllDirty()` (never overwrites a queue row) →
+write `sync:state.userId` **last** (the migration marker). Uploads are upserts by id, so repeats cannot
+duplicate. `verify()` compares every local version with the account; then `verifiedAt` is set and the backup
+expires 30 days later. Settings → "Restore local backup" merges it back at any time. `conflict` (another
+account's notes on the device) → dialog: "Erase and continue" (`eraseAndEnter`) or "Sign out"; never merged.
+
+## Privacy & security rules for builders
+- Render user text (titles, names, note text, emails, error text) only as text nodes (`h()` children /
+  `textContent`). The two `innerHTML` uses (`icons.js`, the empty-state art in `library.js`) take constants only.
+- Never show server error text; map with `classifyAuthError` → `authMessage`.
+- Never call `console.*` in account/sync code; use `log`. Never log tokens, emails, sessions or note content.
+- No third-party origins, analytics or trackers. CSP in `index.html` and `_headers` must stay identical apart
+  from `frame-ancestors` / `upgrade-insecure-requests`.
+- Rows from the account are validated like an untrusted backup (`rowToDoc` / `rowToPage`): ids, kinds, plain
+  words for paper/pattern, hex colours, images only as `data:image/(png|jpeg|webp|gif)` or `fln-img:` refs.
+
+## Tests (`tests/`, plain Node; `cd tests && npm install` for PGlite, fake-indexeddb, Playwright)
+`auth.test.mjs`, `export-md.test.mjs` (no install needed) · `rls.test.mjs` (real Postgres via PGlite + the real
+migrations; `tests/db/supabase-shim.sql` supplies `auth`/`storage` stand-ins) · `sync.test.mjs`,
+`migrate.test.mjs` (real `store.js` + `local.js` on fake-indexeddb, in-memory backend) · `e2e/auth.e2e.mjs`
+(Chrome; `tests/harness/serve.mjs` swaps `vendor/supabase-js.js` and `js/config.js` **inside the test server
+only**; the app has no test switch).
+
+## v2.0 builder notes (contract changes made while building)
+- 2026-11-13 `js/store.js`: `setSyncTracking`, `onLocalChange`, `closeDB`, internal `_run/_rq/_mark`; write
+  functions now open `meta` too. `importAll({mode:'replace'})` in account mode also tombstones what it wipes.
+  Database name/version unchanged (`flash-notes`, 1): no upgrade needed.
+- 2026-11-13 The drawing engine (`js/canvas/*`) was **not changed**; the sync hook lives entirely in `store.js`.
+  `js/canvas/files.json` is unchanged (no new engine files).
+- 2026-11-13 `index.html`: inline theme script moved to `js/theme-boot.js`; CSP + referrer metas; `noscript`
+  styling via class. `style-src 'self'` holds because the app sets styles through CSSOM (`el.style`), never
+  through `style=""` markup.
+- 2026-11-13 `app.version` is `'2.0'`; `sw.js` VERSION `'v6'` (v5 was the text-box fix), 21 new precache entries.
+- 2026-11-13 A partial earlier build was reused: the vendored supabase-js (rebuilt and matched byte for byte),
+  the three migrations (reworked: Apple removed, `provider_sub` column, `auth.users` trigger dropped in favour of
+  `ensure_profile()`, `account_ok()` restrictive policies, quota guard no longer counts upserts of existing
+  rows) and the Postgres shim.
+- 2026-11-13 A test server that answers `Cache-Control: no-store` makes the service worker's
+  `fetch(..., {cache:'reload'})` precache hang in Chrome; `_headers` therefore must not set `no-store` on assets.
+- **Not done**: live reload of an open page on remote change; Storage cleanup of removed images; syncing
+  settings; an age gate; E2EE (see `docs/E2EE.md`).
+

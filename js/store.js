@@ -1,4 +1,5 @@
-// Flash Notes storage: everything lives in IndexedDB on this device (SPEC §3, §5).
+// Flash Notes storage: everything lives in IndexedDB on this device (SPEC §3, §5). With an account (v2.0)
+// this database stays the working copy; js/sync uploads and downloads changes in the background.
 import { newId } from './canvas/constants.js';
 
 const DB_NAME = 'flash-notes';
@@ -39,6 +40,14 @@ export function openDB() {
   return dbPromise;
 }
 
+/** Closes the connection (used before the database is deleted with the account). */
+export async function closeDB() {
+  if (!dbPromise) return;
+  try { (await dbPromise).close(); } catch { /* never opened */ }
+  dbPromise = null;
+  settingsCache = null;
+}
+
 const rq = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 
 /** Run fn inside one transaction; resolves with fn's result on tx.oncomplete (not request success). */
@@ -48,7 +57,7 @@ async function run(stores, mode, fn) {
     let t;
     try { t = db.transaction(stores, mode); } catch (err) { reject(err); return; }
     let out;
-    t.oncomplete = () => resolve(out);
+    t.oncomplete = () => { if (t._flnMarked) notifyLocalChange(); resolve(out); };
     t.onerror = () => reject(t.error || new Error('Storage error'));
     t.onabort = () => reject(t.error || new Error('Storage transaction aborted'));
     Promise.resolve()
@@ -59,6 +68,40 @@ async function run(stores, mode, fn) {
 }
 
 const now = () => Date.now();
+
+// ---------------------------------------------------------------- change hook for sync (v2.0)
+// When an account is in use, every write to a notebook or page also leaves a small "dirty" row in `meta`
+// in the SAME transaction (key `sync:d:<kind>:<id>`). js/sync reads those rows as its upload queue, so a
+// change can never be saved without being queued, and nothing here ever waits for the network.
+let syncTracking = false;
+const localChangeListeners = new Set();
+let notifyQueued = false;
+
+/** Switched on by js/sync/sync.js when the app runs with accounts. Off = exactly the v1.2 behaviour. */
+export function setSyncTracking(on) { syncTracking = !!on; }
+/** fn() runs (once per burst) after a tracked change has been committed. Returns an unsubscribe function. */
+export function onLocalChange(fn) { localChangeListeners.add(fn); return () => localChangeListeners.delete(fn); }
+
+function notifyLocalChange() {
+  if (notifyQueued) return;
+  notifyQueued = true;
+  setTimeout(() => {
+    notifyQueued = false;
+    localChangeListeners.forEach(fn => { try { fn(); } catch (err) { console.error(err); } });
+  }, 0);
+}
+
+/** kind 'doc' | 'page'. The transaction must include the `meta` store. */
+function mark(t, kind, id, deleted = false, docKind) {
+  if (!syncTracking) return;
+  const row = { key: `sync:d:${kind}:${id}`, kind, id, deleted: !!deleted, at: now() };
+  if (docKind) row.docKind = docKind;
+  t.objectStore('meta').put(row);
+  t._flnMarked = true;
+}
+
+/** Internal: transaction helpers for js/sync/local.js (the sync queue lives in the same database). */
+export { run as _run, rq as _rq, mark as _mark };
 const clone = v => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)));
 
 function blankPage(docId, paper) {
@@ -91,7 +134,7 @@ export function getDoc(id) {
 }
 
 export function putDoc(doc) {
-  return run(['docs'], 'readwrite', t => { t.objectStore('docs').put(doc); return doc; });
+  return run(['docs', 'meta'], 'readwrite', t => { t.objectStore('docs').put(doc); mark(t, 'doc', doc.id); return doc; });
 }
 
 export function deleteDoc(id) {
@@ -99,8 +142,10 @@ export function deleteDoc(id) {
     const pageKeys = await deleteByIndex(t.objectStore('pages'), 'docId', id);
     await deleteByIndex(t.objectStore('thumbs'), 'docId', id);
     const meta = t.objectStore('meta');
-    for (const pid of pageKeys) meta.delete('view:' + pid);
+    for (const pid of pageKeys) { meta.delete('view:' + pid); mark(t, 'page', pid, true); }
+    const gone = await rq(t.objectStore('docs').get(id));
     t.objectStore('docs').delete(id);
+    mark(t, 'doc', id, true, gone ? gone.kind : undefined);
   });
 }
 
@@ -115,11 +160,12 @@ export function getPage(id) {
  * part of its doc (deleted while a debounced save was pending) is never written back to life.
  */
 export function putPage(page) {
-  return run(['pages', 'docs'], 'readwrite', async t => {
+  return run(['pages', 'docs', 'meta'], 'readwrite', async t => {
     const docs = t.objectStore('docs');
     const doc = await rq(docs.get(page.docId));
     if (!doc || !(doc.pageIds || []).includes(page.id)) return page;
     t.objectStore('pages').put(page);
+    mark(t, 'page', page.id);          // the notebook row itself did not change, so it is not re-uploaded
     doc.updatedAt = now();
     docs.put(doc);
     return page;
@@ -128,13 +174,14 @@ export function putPage(page) {
 
 /** Atomic read-modify-write of a doc's own fields (never pageIds), so concurrent page edits are not lost. */
 export function patchDoc(id, patch) {
-  return run(['docs'], 'readwrite', async t => {
+  return run(['docs', 'meta'], 'readwrite', async t => {
     const docs = t.objectStore('docs');
     const doc = await rq(docs.get(id));
     if (!doc) return null;
     const { pageIds, id: _id, kind, ...safe } = patch || {};
     Object.assign(doc, safe, { updatedAt: now() });
     docs.put(doc);
+    mark(t, 'doc', id);
     return doc;
   });
 }
@@ -147,6 +194,7 @@ export function deletePage(id) {
     pages.delete(id);
     t.objectStore('thumbs').delete(id);
     t.objectStore('meta').delete('view:' + id);
+    mark(t, 'page', id, true);
     if (!page) return null;
     const docs = t.objectStore('docs');
     const doc = await rq(docs.get(page.docId));
@@ -155,10 +203,12 @@ export function deletePage(id) {
     if (!doc.pageIds.length) {
       const fresh = blankPage(doc.id, doc.kind === 'notebook' ? doc.paper : page.paper);
       pages.put(fresh);
+      mark(t, 'page', fresh.id);
       doc.pageIds = [fresh.id];
     }
     doc.updatedAt = now();
     docs.put(doc);
+    mark(t, 'doc', doc.id);
     return doc;
   });
 }
@@ -225,9 +275,11 @@ export function createNotebook(partial = {}) {
   };
   const page = blankPage(doc.id, doc.paper);
   doc.pageIds.push(page.id);
-  return run(['docs', 'pages'], 'readwrite', t => {
+  return run(['docs', 'pages', 'meta'], 'readwrite', t => {
     t.objectStore('docs').put(doc);
     t.objectStore('pages').put(page);
+    mark(t, 'doc', doc.id);
+    mark(t, 'page', page.id);
     return doc;
   });
 }
@@ -243,15 +295,17 @@ export function createWhiteboard(partial = {}) {
   };
   const page = blankPage(doc.id, { style: 'blank', color: partial.color || 'white' });
   doc.pageIds.push(page.id);
-  return run(['docs', 'pages'], 'readwrite', t => {
+  return run(['docs', 'pages', 'meta'], 'readwrite', t => {
     t.objectStore('docs').put(doc);
     t.objectStore('pages').put(page);
+    mark(t, 'doc', doc.id);
+    mark(t, 'page', page.id);
     return doc;
   });
 }
 
 export function addPage(docId, afterPageId, paper) {
-  return run(['docs', 'pages'], 'readwrite', async t => {
+  return run(['docs', 'pages', 'meta'], 'readwrite', async t => {
     const docs = t.objectStore('docs');
     const doc = await rq(docs.get(docId));
     if (!doc) throw new Error('Notebook not found');
@@ -261,6 +315,8 @@ export function addPage(docId, afterPageId, paper) {
     doc.updatedAt = now();
     t.objectStore('pages').put(page);
     docs.put(doc);
+    mark(t, 'page', page.id);
+    mark(t, 'doc', doc.id);
     return page;
   });
 }
@@ -278,7 +334,7 @@ function copyPage(src, docId) {
 
 /** Copies a page and inserts the copy right after the original. Returns the new page. */
 export function duplicatePage(pageId) {
-  return run(['docs', 'pages', 'thumbs'], 'readwrite', async t => {
+  return run(['docs', 'pages', 'thumbs', 'meta'], 'readwrite', async t => {
     const pages = t.objectStore('pages');
     const src = await rq(pages.get(pageId));
     if (!src) throw new Error('Page not found');
@@ -291,6 +347,8 @@ export function duplicatePage(pageId) {
     doc.updatedAt = now();
     pages.put(page);
     docs.put(doc);
+    mark(t, 'page', page.id);
+    mark(t, 'doc', doc.id);
     const thumbs = t.objectStore('thumbs');
     const th = await rq(thumbs.get(pageId));
     if (th) thumbs.put({ id: page.id, docId: doc.id, data: th.data });
@@ -311,12 +369,14 @@ export async function duplicateDoc(docId) {
   doc.pageIds = [];
   await putDoc(doc);
   for (const pid of src.pageIds || []) {
-    await run(['docs', 'pages', 'thumbs'], 'readwrite', async t => {
+    await run(['docs', 'pages', 'thumbs', 'meta'], 'readwrite', async t => {
       const pages = t.objectStore('pages');
       const p = await rq(pages.get(pid));
       if (!p) return;
       const copy = copyPage(p, doc.id);
       pages.put(copy);
+      mark(t, 'page', copy.id);
+      mark(t, 'doc', doc.id);
       const thumbs = t.objectStore('thumbs');
       const th = await rq(thumbs.get(pid));
       if (th) thumbs.put({ id: copy.id, docId: doc.id, data: th.data });
@@ -330,13 +390,16 @@ export async function duplicateDoc(docId) {
   if (!out.pageIds.length) {
     const page = blankPage(out.id, out.paper);
     out.pageIds = [page.id];
-    await run(['docs', 'pages'], 'readwrite', t => { t.objectStore('pages').put(page); t.objectStore('docs').put(out); });
+    await run(['docs', 'pages', 'meta'], 'readwrite', t => {
+      t.objectStore('pages').put(page); t.objectStore('docs').put(out);
+      mark(t, 'page', page.id); mark(t, 'doc', out.id);
+    });
   }
   return out;
 }
 
 export function movePage(docId, fromIndex, toIndex) {
-  return run(['docs'], 'readwrite', async t => {
+  return run(['docs', 'meta'], 'readwrite', async t => {
     const docs = t.objectStore('docs');
     const doc = await rq(docs.get(docId));
     if (!doc) throw new Error('Notebook not found');
@@ -347,6 +410,7 @@ export function movePage(docId, fromIndex, toIndex) {
     doc.pageIds.splice(toIndex, 0, id);
     doc.updatedAt = now();
     docs.put(doc);
+    mark(t, 'doc', doc.id);
     return doc;
   });
 }
@@ -416,6 +480,10 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
 
   if (mode === 'replace') {
     await run(['docs', 'pages', 'thumbs', 'meta'], 'readwrite', async t => {
+      if (syncTracking) {   // with an account, "replace" also deletes these from the account
+        for (const d of await rq(t.objectStore('docs').getAll())) mark(t, 'doc', d.id, true, d.kind);
+        for (const k of await rq(t.objectStore('pages').getAllKeys())) mark(t, 'page', k, true);
+      }
       t.objectStore('docs').clear();
       t.objectStore('pages').clear();
       t.objectStore('thumbs').clear();
@@ -451,13 +519,13 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
       if (remap) { page.createdAt = src.createdAt || page.createdAt; page.updatedAt = src.updatedAt || page.updatedAt; }
       if (!Array.isArray(page.items)) page.items = [];
       if (!page.paper) page.paper = { style: 'blank', color: 'white' };
-      await run(['pages'], 'readwrite', t => { t.objectStore('pages').put(page); });
+      await run(['pages', 'meta'], 'readwrite', t => { t.objectStore('pages').put(page); mark(t, 'page', page.id); });
       doc.pageIds.push(page.id);
       result.pages++;
     }
     if (!doc.pageIds.length) {
       const page = blankPage(doc.id, doc.paper);
-      await run(['pages'], 'readwrite', t => { t.objectStore('pages').put(page); });
+      await run(['pages', 'meta'], 'readwrite', t => { t.objectStore('pages').put(page); mark(t, 'page', page.id); });
       doc.pageIds.push(page.id);
     }
     if (doc.kind === 'whiteboard') doc.pageIds = doc.pageIds.slice(0, 1);

@@ -1,0 +1,15 @@
+{
+  "name": "flash-notes-tests",
+  "private": true,
+  "description": "Dev-only tools for the tests in this folder. Nothing here is loaded by the app.",
+  "type": "module",
+  "scripts": {
+    "test": "for t in *.test.mjs; do node $t || exit 1; done",
+    "e2e": "node e2e/auth.e2e.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
+    "fake-indexeddb": "6.2.8",
+    "playwright": "1.63.0"
+  }
+}

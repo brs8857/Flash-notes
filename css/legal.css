@@ -1,0 +1,26 @@
+/* Flash Notes — the privacy page (a plain document: no scripts, readable without the app). */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; background: var(--bg); color: var(--text); }
+body { margin: 0; font: 400 17px/1.55 var(--font-ui); }
+.legal { max-width: 720px; margin: 0 auto; padding: calc(28px + var(--safe-top)) 22px calc(60px + var(--safe-bottom)); }
+.legal-back { display: inline-block; margin-bottom: 18px; padding: 9px 16px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; font-size: 15px; text-decoration: none; }
+.legal h1 { margin: 0 0 6px; font: 700 32px/1.15 var(--font-rounded); }
+.legal h2 { margin: 34px 0 8px; font: 700 21px/1.25 var(--font-rounded); }
+.legal h3 { margin: 22px 0 6px; font-size: 17px; }
+.legal p, .legal li { color: var(--text); }
+.legal ul { padding-left: 22px; }
+.legal li { margin: 5px 0; }
+.legal a { color: var(--accent); }
+.legal .lede { font-size: 18px; color: var(--text-2); }
+.legal .card { margin: 18px 0; padding: 16px 18px; border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-1); }
+.legal .card > :first-child { margin-top: 0; }
+.legal .card > :last-child { margin-bottom: 0; }
+.legal table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 15.5px; }
+.legal th, .legal td { padding: 9px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--separator); }
+.legal th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-2); }
+.legal .table-wrap { overflow-x: auto; }
+.legal small, .legal .muted { color: var(--text-2); }
+/* Things only the owner can supply. Deliberately loud: the page must not go live with these in it. */
+.fill { padding: 1px 6px; border-radius: 6px; background: #FFE066; color: #5C3D00; font-weight: 700; font-family: var(--font-mono); font-size: 0.88em; white-space: nowrap; }
+.owner-note { margin: 18px 0; padding: 14px 16px; border-radius: var(--r-md); border: 2px dashed #F08C00; background: rgba(240, 140, 0, 0.10); font-size: 15.5px; }
+.owner-note > :first-child { margin-top: 0; }
+.owner-note > :last-child { margin-bottom: 0; }

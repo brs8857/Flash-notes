@@ -1,13 +1,19 @@
 // Flash Notes — app shell: boot, hash router, theme, settings, service worker.
-import { h, animate, EASE_OUT, wait, reducedMotion } from './ui/dom.js';
+import { h, animate, EASE_OUT, wait, reducedMotion, idle, plural } from './ui/dom.js';
 import { squircleAll } from './ui/squircle.js';
 import { toast } from './ui/toast.js';
 import { mountLibrary } from './ui/library.js';
 import { mountEditor } from './ui/editor.js';
 import * as store from './store.js';
 import { ensureHandFont } from './canvas/fonts.js';
+import { initAuth, watchSession, authConfigured, currentUser, onAuthChange, takeAuthError, signOut } from './auth/auth.js';
+import { routeDecision } from './auth/guard.js';
+import { mountLogin } from './ui/login.js';
+import { alertDialog } from './ui/sheet.js';
+import { onRemoteData } from './sync/sync.js';
+import * as account from './account.js';
 
-const VERSION = '1.2';
+const VERSION = '2.0';
 const root = document.getElementById('app');
 const settingsListeners = new Set();
 let current = null;           // the mounted view: {name, leave(), ...}
@@ -92,7 +98,47 @@ function playOpenFx(fx) {
   return { el, grown };
 }
 
+/**
+ * Route guard (v2.0). On a site with accounts, nobody reaches a notes screen without a signed-in user:
+ * every route passes through here. Returns true when the route may be shown.
+ */
+async function guard() {
+  if (routeDecision({ configured: authConfigured(), user: currentUser() }) === 'login') {
+    if (current && current.name === 'login') return false;
+    const prev = current;
+    current = null;
+    account.left();                                           // stop background sync
+    document.querySelectorAll('.sheet-root, .alert-root').forEach(el => el.remove());
+    if (prev) await prev.leave();
+    cameFromLibrary = false;
+    current = await mountLogin(root, app, { error: takeAuthError() });
+    return false;
+  }
+  if (current && current.name === 'login') { const p = current; current = null; await p.leave(); }
+  if (!authConfigured()) return true;
+
+  const user = currentUser();
+  const entered = await account.enter(user);                  // first sign-in: adopt the notes on this device
+  if (entered.decision === 'conflict') {
+    // Notes of a different account are still on this device. They are never mixed into this account.
+    const choice = await alertDialog({
+      title: 'Notes from another account',
+      message: `This device still holds notes from a different account${entered.hint ? ` (${entered.hint})` : ''}. They can’t be added to yours.\n\nErase them from this device to continue? Anything that account had not finished uploading will be lost.`,
+      buttons: [
+        { label: 'Erase and continue', value: 'erase', style: 'danger' },
+        { label: 'Sign out', value: null, style: 'cancel' },
+      ],
+    });
+    if (choice !== 'erase') { await signOut(); return false; }   // back to the login screen, nothing changed
+    await account.eraseOtherAndEnter(user);
+  } else if (entered.decision === 'adopt' && entered.backup) {
+    toast(`Adding ${plural(entered.backup.docs, 'notebook')} from this device to your account. A copy stays here.`, { icon: 'shield', duration: 5000 });
+  }
+  return true;
+}
+
 async function doRoute() {
+  if (!(await guard())) return;
   const r = parse(location.hash);
   const fx = pendingFx; pendingFx = null;
 
@@ -215,11 +261,15 @@ async function boot() {
     return;
   }
   applyTheme(app.settings.theme);
-  if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/');
+  await initAuth();                                   // finishes a sign-in redirect, or restores the cached session (works offline)
+  onAuthChange(() => { route(); });                   // signed out, session expired, signed in from another tab
+  onRemoteData(() => { if (current && current.name === 'library') current.refresh(); });
+  if (!location.hash || location.hash === '#' || !location.hash.startsWith('#/')) history.replaceState(null, '', location.pathname + location.search + '#/');
   window.addEventListener('hashchange', () => { route(); });
   await route();
   await wait(0);
   registerServiceWorker();
+  if (authConfigured()) idle(() => { watchSession(); }, 3000);   // supabase-js loads after the app is on screen
 }
 
 boot();

@@ -1,0 +1,7 @@
+# Flash Notes — settings for the Supabase CLI (used by `supabase functions deploy` and `supabase db push`).
+# The hosted project's Auth settings are set in the dashboard: see SETUP.md.
+project_id = "flash-notes"
+
+[functions.delete-account]
+# Keep JWT verification ON: the platform rejects calls without a valid user token before the code runs.
+verify_jwt = true

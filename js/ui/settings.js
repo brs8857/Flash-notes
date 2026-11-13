@@ -5,6 +5,8 @@ import { openSheet, alertDialog } from './sheet.js';
 import { toast } from './toast.js';
 import { exportBackup } from './export.js';
 import * as store from '../store.js';
+import { accountSection } from './account.js';
+import { authConfigured } from '../auth/auth.js';
 
 function toggle(checked, label, onChange) {
   const input = h('input', { type: 'checkbox', class: 'switch-input', checked, role: 'switch', 'aria-label': label, onChange: e => onChange(e.target.checked) });
@@ -107,7 +109,13 @@ export function openSettings(app, { onDataChanged } = {}) {
         h('span', { class: 'row-title' }, 'Add to Home Screen to protect your notes'),
         h('span', { class: 'row-sub' }, 'In Safari tap ', h('span', { class: 'inline-icon' }, icon('share', 15, 2.2)), ' Share, then “Add to Home Screen”.')))) : null;
 
+  // Account (only when the site runs with accounts; otherwise the app is local-only as before)
+  let sheet = null;
+  const acct = accountSection(app, { row, group, closeSheet: () => sheet && sheet.close(), onDataChanged });
+  const cloud = !!acct;
+
   const body = h('div', { class: 'settings' },
+    acct ? acct.nodes : null,
     group('Appearance', null, h('div', { class: 'row row--seg' }, themeSeg)),
     group('Drawing', 'With Pencil-only on, your fingers scroll and zoom and only Apple Pencil draws. It switches on by itself the first time a Pencil touches the page.',
       row({ iconName: 'pencilOnly', tint: '#4C6EF5', title: 'Pencil-only drawing', control: toggle(!!s.pencilOnlyUser, 'Pencil-only drawing', v => app.updateSettings({ pencilOnlyUser: v })) }),
@@ -118,18 +126,23 @@ export function openSettings(app, { onDataChanged } = {}) {
       row({ iconName: 'pen', tint: '#0C8599', title: 'Auto-tidy handwriting', sub: 'Gently straightens and evens each line once you move on',
         control: toggle(s.autoTidy !== false, 'Auto-tidy handwriting', v => app.updateSettings({ autoTidy: v })) })),
     a2hs,
-    group('Storage', 'Notes never leave this device. There are no accounts and no servers, so the only limit is your device’s free space.',
+    group('Storage', cloud
+      ? 'Notes are kept on this device so they open instantly and work offline, and in your private account so they are on your other devices too.'
+      : 'Notes never leave this device. There are no accounts and no servers, so the only limit is your device’s free space.',
       usageRow, persistRow),
-    group('Backup', 'A backup is one file with every notebook and whiteboard. Save it to Files or iCloud Drive now and then, especially before clearing Safari data or changing iPad.',
+    group('Backup', cloud
+      ? 'A backup is one file with every notebook and whiteboard. Restoring adds to your account; “Replace everything” also replaces what is in your account.'
+      : 'A backup is one file with every notebook and whiteboard. Save it to Files or iCloud Drive now and then, especially before clearing Safari data or changing iPad.',
       row({ iconName: 'download', tint: '#0C8599', title: 'Download backup', sub: 'Save all notes as one .json file', onClick: () => exportBackup() }),
       row({ iconName: 'upload', tint: '#9C36B5', title: 'Restore from backup', sub: 'Merge or replace with a backup file', onClick: restore })),
     h('section', { class: 'about' },
       h('div', { class: 'about-icon', 'data-squircle': '15' }),
       h('div', { class: 'about-name' }, 'Flash Notes'),
-      h('div', { class: 'about-text' }, 'Free forever. No account, no ads, no limits. Made by students, for students.'),
-      h('div', { class: 'about-meta' }, `Version ${app.version} · handwriting powered by perfect-freehand (MIT) · Patrick Hand font (OFL)`)));
+      h('div', { class: 'about-text' }, authConfigured() ? 'Free forever. No ads, no tracking, no limits. Made by students, for students.' : 'Free forever. No account, no ads, no limits. Made by students, for students.'),
+      authConfigured() ? h('a', { class: 'about-link', href: './privacy.html' }, 'Privacy policy') : null,
+      h('div', { class: 'about-meta' }, `Version ${app.version} · handwriting powered by perfect-freehand (MIT) · Patrick Hand font (OFL)${authConfigured() ? ' · accounts by Supabase (supabase-js, MIT)' : ''}`)));
 
-  const sheet = openSheet({ title: 'Settings', body, size: 'md', doneLabel: 'Done', className: 'sheet--grouped', onClose: () => picker.destroy() });
+  sheet = openSheet({ title: 'Settings', body, size: 'md', doneLabel: 'Done', className: 'sheet--grouped', onClose: () => { picker.destroy(); if (acct) acct.destroy(); } });
   refreshStorage();
   return sheet;
 }

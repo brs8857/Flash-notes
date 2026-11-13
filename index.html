@@ -2,6 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!--
+  Content-Security-Policy. Only this site's own files may run or load; the only other address the app may
+  talk to is the Supabase project (FILL IN: replace YOUR-PROJECT-REF with your project's reference, the same
+  one as in js/config.js; see SETUP.md step 6). No inline scripts, no inline styles, no third parties.
+  GitHub Pages cannot send HTTP headers, so the policy is set here; `_headers` holds the full header set
+  (including frame-ancestors and HSTS, which a <meta> tag cannot express) for hosts that can.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://YOUR-PROJECT-REF.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Flash Notes</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="description" content="Free, unlimited, offline handwriting notes for students. Works with Apple Pencil.">
@@ -18,10 +27,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
 <link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-<script>
-  // Apply a forced theme before first paint (the full settings live in IndexedDB).
-  try { var t = localStorage.getItem('fln.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-</script>
+<script src="./js/theme-boot.js"></script>
 <link rel="preload" as="font" type="font/woff2" href="./vendor/fonts/patrick-hand-latin-400-normal.woff2" crossorigin>
 <link rel="stylesheet" href="./css/tokens.css">
 <link rel="stylesheet" href="./css/canvas.css">
@@ -29,7 +35,7 @@
 </head>
 <body>
 <div id="app"></div>
-<noscript><p style="padding:40px;text-align:center">Flash Notes needs JavaScript to run.</p></noscript>
+<noscript><p class="noscript">Flash Notes needs JavaScript to run.</p></noscript>
 <script type="module" src="./js/app.js"></script>
 </body>
 </html>

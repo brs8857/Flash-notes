@@ -1,7 +1,8 @@
 # Flash Notes
 
 A free handwriting notes app for students. It runs in the browser, installs on an iPad home screen like a
-real app, works offline, and has no limits, accounts or ads.
+real app, works offline, and has no limits or ads. From v2.0 it can also keep your notes in a private account
+so they are the same on every device (once the site owner has switched accounts on, see `SETUP.md`).
 
 **Open it:** https://brs8857.github.io/Flash-notes/
 
@@ -36,6 +37,13 @@ real app, works offline, and has no limits, accounts or ads.
 - Export a page as PNG or a whole notebook as a PDF
 - Light and dark mode
 - Backup and restore everything as one file
+- **Accounts and sync** (v2.0, when switched on by the site owner):
+  - **Sign in with Google**, nothing else to remember. Only your name and email are used.
+  - Your notes are **private to your account** and appear on all your devices. They are still saved on the
+    device first, so writing never waits for the internet and everything works offline.
+  - Notes already on a device are added to your account the first time you sign in; a copy stays on the device.
+  - **Settings → Account**: sign out, download everything (JSON), export text as Markdown (handwriting can't be
+    Markdown), delete your account and all its notes.
 
 ## Install on iPad or iPhone
 
@@ -48,14 +56,19 @@ Home-screen apps are not affected.
 
 ## Privacy
 
-Your notes never leave your device. There is no server, no account and no tracking. Everything is saved in
-the browser's storage (IndexedDB) on the device you write on.
+No ads, no analytics, no trackers, in either mode. The full policy is on the [privacy page](privacy.html).
+
+- **Without accounts** (the default until the owner sets up a backend): your notes never leave your device.
+  Everything is saved in the browser's storage (IndexedDB).
+- **With accounts**: notes are also stored in the owner's Supabase project, in rows only your account can read
+  (row-level security, tested in `tests/rls.test.mjs`). The app receives your Google name and email and nothing
+  else. Notes are not end-to-end encrypted; `docs/E2EE.md` explains the trade-offs.
 
 ## Back up your notes
 
-Because notes only live on your device, keep a backup: **Settings → Download backup** saves every notebook
-and whiteboard as one `.json` file. Put it in Files or iCloud Drive. Do this before clearing Safari data,
-resetting or changing iPad. **Settings → Restore from backup** brings it all back.
+**Settings → Download backup** (or **Download my notes**) saves every notebook and whiteboard as one `.json`
+file. Put it in Files or iCloud Drive. **Settings → Restore from backup** brings it all back. Without an account
+this is the only copy besides your device, so do it before clearing Safari data or changing iPad.
 
 ## Run it locally
 
@@ -67,8 +80,17 @@ python3 -m http.server 8000
 
 Then open http://localhost:8000/. Releases bump `VERSION` in `sw.js` so installed copies offer the update.
 
-Tests for the shape, tidy, colour and brush maths run with plain Node: `node tests/shapes.test.mjs`,
-`node tests/tidy.test.mjs` and `node tests/color.test.mjs`.
+Tests run with plain Node. No install needed: `node tests/shapes.test.mjs`, `tests/tidy.test.mjs`,
+`tests/color.test.mjs`, `tests/auth.test.mjs`, `tests/export-md.test.mjs`. The account tests need three dev-only
+packages (`cd tests && npm install`): `rls.test.mjs` (the real database rules on Postgres/PGlite),
+`sync.test.mjs`, `migrate.test.mjs`, and the browser run `node e2e/auth.e2e.mjs`.
+
+## Accounts and sync (for the site owner)
+
+`SETUP.md` is the step-by-step guide: Supabase project, Google sign-in, the delete-account function, and the
+three places to fill in. Until `js/config.js` is filled in, the app stays local-only. Design and contracts are in
+`SPEC.md` ("Auth & sync v2.0"); the database is in `supabase/`; the vendored client is described in
+`vendor/README.md`.
 
 ## Checking Pencil-to-text on a real iPad
 

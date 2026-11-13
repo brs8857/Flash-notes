@@ -3,7 +3,7 @@
 A free, unlimited, offline-first handwriting notes app for students. It runs in the browser and installs on an iPad home screen like a native app.
 
 ## Principles
-1. **Free and unlimited.** No accounts, no servers, no paywalls. Notes are saved on the device (IndexedDB), so the only limit is the device's own storage.
+1. **Free and unlimited.** No paywalls, no ads. Notes are always saved on the device (IndexedDB) first. From v2.0 an optional Google sign-in keeps them in a private account as well.
 2. **Feels native on iPad.** Squircle shapes, frosted-glass bars, spring animations, Apple Pencil pressure, palm rejection, pinch to zoom.
 3. **Nothing too fancy.** We do the core tools very well: pen, highlighter, eraser, lasso, text, images, undo/redo.
 4. **Never lose work.** Autosave on every change, persistent storage request, and one-tap backup/restore.
@@ -82,6 +82,23 @@ Measured with a benchmark (3,000-point stroke on a page that already holds 2,000
 
 ### v2 — Optional sync
 - Optional free sync via the user's own cloud (e.g. export to Files/iCloud Drive automatically)
+
+### v2.0 — Accounts & sync (built, waiting for the owner's Supabase setup)
+- [x] Sign in with Google (PKCE, verified emails only); login screen with loading and error states
+- [x] Private per-account notes in Supabase Postgres with forced row-level security; photos in a private bucket
+- [x] Offline-first background sync, last write wins per page, tombstones for deletions
+- [x] Notes already on a device are uploaded at first sign-in, once, with a restorable local copy
+- [x] Settings → Account: sign out, download JSON, export Markdown, delete account (Edge Function)
+- [x] Privacy page, strict Content-Security-Policy, masking logger, no third parties
+- [x] Local-only mode unchanged until `js/config.js` is filled in
+- [ ] **Owner:** follow `SETUP.md`, fill in `privacy.html`, run the live checklist (real Google + Supabase were not testable in the build)
+
+#### Later
+- [ ] Reload an open page when another device changes it; merge strokes instead of last-write-wins per page
+- [ ] Delete stored images that no page uses any more (today they go when the account is deleted)
+- [ ] Age gate / parental consent flow, if the owner's Children's Code assessment calls for one
+- [ ] End-to-end encryption as an opt-in "Private vault" (`docs/E2EE.md`, needs the owner's go-ahead)
+- [ ] Sync settings (pens, colours) between devices
 
 ## Quality process
 1. Spec written by Opus, reviewed by Sonnet *before* any code.

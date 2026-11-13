@@ -1,0 +1,15 @@
+# Flash Notes — HTTP security headers for hosts that support a `_headers` file (Netlify, Cloudflare Pages).
+# GitHub Pages cannot send custom headers and ignores this file; there the policy in index.html's
+# <meta http-equiv="Content-Security-Policy"> applies instead (it cannot express frame-ancestors or HSTS).
+#
+# FILL IN: replace YOUR-PROJECT-REF with your Supabase project reference (same as js/config.js and index.html).
+# Do not add "Cache-Control: no-store" for the app's files: the service worker has to be able to cache them.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://YOUR-PROJECT-REF.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
