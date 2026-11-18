@@ -37,6 +37,9 @@ so they are the same on every device (once the site owner has switched accounts 
 - Export a page as PNG or a whole notebook as a PDF
 - Light and dark mode
 - Backup and restore everything as one file
+- **Automatic backup** (v2.1): every hour, 6 hours, day, week or month, kept as snapshots in the app, and
+  optionally saved as a file (iPad: one tap on a "Backup ready" banner) or into a folder (Chrome/Edge on a
+  computer). Restore from a snapshot or a file, alongside your notes or replacing them.
 - **Accounts and sync** (v2.0, when switched on by the site owner):
   - **Sign in with Google**, nothing else to remember. Only your name and email are used.
   - Your notes are **private to your account** and appear on all your devices. They are still saved on the
@@ -66,9 +69,34 @@ No ads, no analytics, no trackers, in either mode. The full policy is on the [pr
 
 ## Back up your notes
 
-**Settings → Download backup** (or **Download my notes**) saves every notebook and whiteboard as one `.json`
-file. Put it in Files or iCloud Drive. **Settings → Restore from backup** brings it all back. Without an account
-this is the only copy besides your device, so do it before clearing Safari data or changing iPad.
+**Settings → Backup.**
+
+- **Automatic backup**: switch it on and choose how often (hourly, every 6 hours, daily, weekly, monthly) and
+  how many snapshots to keep (3, 5, 10 or 20). **It runs while Flash Notes is open**: when you open it, when you
+  come back to it, and every so often while you use it. A web app cannot run in the background on iPad, so a
+  backup that falls due while the app is closed is made the next time you open it (once, however long it has
+  been). It works in small steps and waits while your finger or Pencil is on the screen, so drawing never
+  stutters. If nothing changed since the last backup, no new copy is made.
+- **Save to**:
+  - **In the app**: snapshots in the browser's storage, listed with date, size and page count; Restore,
+    Download or Delete each one. They protect against mistakes, not against losing the iPad or clearing
+    Safari's data.
+  - **Save a file** (best on iPad/iPhone): when a backup is ready a small banner appears; tap **Save** and pick
+    Files or iCloud Drive. Safari never saves a file without your tap. **Later** asks again tomorrow.
+  - **A folder** (Chrome or Edge on a computer only): pick a folder once; each backup is written there as
+    `flash-notes-backup-YYYY-MM-DD-HHmm.flashnotes`, keeping the newest few. If the browser forgets the
+    permission, a banner asks you to allow it again. Not offered in Safari, which does not allow it.
+- **Back up now**, the last-backup status, and plain messages when something goes wrong (out of space,
+  folder permission lost).
+- **Save a backup file** / **Restore from file**: one `.flashnotes` file with every notebook, whiteboard and
+  picture. Restoring asks **Add alongside** (nothing you have is changed) or **Replace everything** (asks again,
+  and saves a safety snapshot of what is there first). Older `.json` backups still restore.
+
+A `.flashnotes` file is a normal ZIP: `manifest.json` (format version, counts, SHA-256 of every part),
+`library.json` (the notes, same model as the old JSON backup), `images/` (each picture once, as a real image
+file) and `markdown/` (readable copies of your text, one file per page). Backups hold notes, pictures and pen
+settings only, never your account, sign-in or session. Without an account a backup is the only copy besides
+your device, so save one to Files now and then, especially before clearing Safari data or changing iPad.
 
 ## Run it locally
 
@@ -81,9 +109,10 @@ python3 -m http.server 8000
 Then open http://localhost:8000/. Releases bump `VERSION` in `sw.js` so installed copies offer the update.
 
 Tests run with plain Node. No install needed: `node tests/shapes.test.mjs`, `tests/tidy.test.mjs`,
-`tests/color.test.mjs`, `tests/auth.test.mjs`, `tests/export-md.test.mjs`. The account tests need three dev-only
-packages (`cd tests && npm install`): `rls.test.mjs` (the real database rules on Postgres/PGlite),
-`sync.test.mjs`, `migrate.test.mjs`, and the browser run `node e2e/auth.e2e.mjs`.
+`tests/color.test.mjs`, `tests/auth.test.mjs`, `tests/export-md.test.mjs`. The account and backup tests need three
+dev-only packages (`cd tests && npm install`): `rls.test.mjs` (the real database rules on Postgres/PGlite),
+`sync.test.mjs`, `migrate.test.mjs`, `backup.test.mjs`, and the browser runs `node e2e/auth.e2e.mjs` and
+`node e2e/backup.e2e.mjs`.
 
 ## Accounts and sync (for the site owner)
 
@@ -119,6 +148,19 @@ Latency can only be judged on the device. After a change to `js/canvas/draw.js`,
 3. Fill a page, then draw one very long stroke without lifting. It should stay smooth to the end.
 4. Pinch to zoom on the full page: it should follow both fingers at once and turn sharp when you stop.
 5. Drag in the custom colour square and along the hue bar with a finger and with the Pencil.
+
+## Checking automatic backup on a real iPad
+
+The share sheet, the Files app and iOS pausing the app cannot be tested automatically. On an iPad, from the
+Home Screen app:
+
+1. Settings → Backup: switch on Automatic backup, Hourly, Save to **Save a file**. A "Backup ready" banner
+   appears; tap **Save**, choose Save to Files → iCloud Drive. The file is named `flash-notes-backup-….flashnotes`.
+2. Write something, switch to another app for over an hour, come back: one new banner (not several).
+3. Tap **Later**: no banner again until tomorrow.
+4. Settings → Restore from file → pick that file in Files → Add alongside / Replace everything both work, and
+   pictures come back.
+5. Draw quickly while a backup is being made (Back up now on a big notebook): the ink never stutters.
 
 ## Credits
 

@@ -80,8 +80,19 @@ Measured with a benchmark (3,000-point stroke on a page that already holds 2,000
 - Flashcard pages
 - PDF import (annotate past papers and mark schemes)
 
-### v2 — Optional sync
-- Optional free sync via the user's own cloud (e.g. export to Files/iCloud Drive automatically)
+### v2.1 — Automatic backup (built)
+- [x] Settings → Backup: automatic backup every hour / 6 hours / day / week / month, while the app is open
+- [x] In-app snapshots (keep 3/5/10/20), skipped when nothing changed; Restore / Download / Delete each one
+- [x] "Save a file" destination: a one-tap "Backup ready" banner (share sheet → Files / iCloud Drive), snooze a day
+- [x] Folder destination where the browser allows it (Chrome/Edge desktop): one pick, pruned to the newest N
+- [x] `.flashnotes` file (ZIP: manifest with SHA-256s, library.json, binary images, Markdown copies), versioned
+- [x] Restore from file (.flashnotes or the old .json): add alongside, or replace after a safety snapshot
+- [x] Built in idle slices that wait for the pen; no long tasks over 50 ms on a 60-page, 30,000-stroke library
+- [ ] **Owner:** run the README's "Checking automatic backup on a real iPad" list (share sheet, Files, iOS suspending the app)
+
+#### Later
+- [ ] A JavaScript inflater so devices without `DecompressionStream('deflate-raw')` (iOS before 16.4) can open compressed backups
+- [ ] Optional encryption of backup files with a passphrase
 
 ### v2.0 — Accounts & sync (built, waiting for the owner's Supabase setup)
 - [x] Sign in with Google (PKCE, verified emails only); login screen with loading and error states

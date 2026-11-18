@@ -42,7 +42,7 @@ const idbCounts = page => page.evaluate(async () => {
   const db = await new Promise((res, rej) => { const r = indexedDB.open('flash-notes'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   const count = s => new Promise(res => { if (!db.objectStoreNames.contains(s)) return res(0); const r = db.transaction(s).objectStore(s).count(); r.onsuccess = () => res(r.result); });
   const keys = await new Promise(res => { if (!db.objectStoreNames.contains('meta')) return res([]); const r = db.transaction('meta').objectStore('meta').getAllKeys(); r.onsuccess = () => res(r.result); });
-  const out = { docs: await count('docs'), pages: await count('pages'), thumbs: await count('thumbs'), queue: keys.filter(k => String(k).startsWith('sync:d:')).length, sync: keys.filter(k => /^(sync:|backup:)/.test(String(k))).length };
+  const out = { docs: await count('docs'), pages: await count('pages'), thumbs: await count('thumbs'), queue: keys.filter(k => String(k).startsWith('sync:d:')).length, sync: keys.filter(k => /^(sync:|backup:|autobk:)/.test(String(k))).length };
   db.close();
   return out;
 });
@@ -172,8 +172,14 @@ await step('sign in as A, create a note, it reaches the account', async () => {
 });
 
 await step('sign out clears the device; signing in again brings the note back', async () => {
+  // v2.1: a backup snapshot on the device must go with the notes
+  await openSettings(p);
+  await p.click('.bk-now');
+  await p.waitForSelector('.bk-snap', { timeout: 15000 });
+  ok(await p.evaluate(async () => (await (await import('./js/backup/snapshots.js')).listSnapshots()).length === 1), 'a backup snapshot exists before signing out');
+  await p.click('.sheet-btn--done'); await p.waitForTimeout(400);
   await signOutViaUi(p);
-  eq(await idbCounts(p), { docs: 0, pages: 0, thumbs: 0, queue: 0, sync: 0 }, 'after sign-out no notes, thumbnails or sync data are left in IndexedDB');
+  eq(await idbCounts(p), { docs: 0, pages: 0, thumbs: 0, queue: 0, sync: 0 }, 'after sign-out no notes, thumbnails, sync data or backup snapshots are left in IndexedDB');
   eq(await p.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('fln.auth')).length), 0, 'after sign-out no session is left in localStorage');
   eq(backend.sessions.size, 0, 'the session was revoked on the server');
   await p.reload(); await p.waitForSelector('.login');

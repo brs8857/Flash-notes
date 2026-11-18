@@ -26,12 +26,16 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * sections = [{doc, pages:[page…]}] (pages in notebook order). Returns the Markdown text.
- * Text boxes are listed top to bottom, then left to right.
+ * Text boxes are listed top to bottom, then left to right. heading:false leaves out the export heading (the
+ * .flashnotes backup writes one small file per page); firstPage numbers the pages from that number.
  */
-export function notesToMarkdown(sections, { exportedAt } = {}) {
-  const out = ['# Flash Notes export', ''];
-  if (exportedAt) out.push(`Exported ${new Date(exportedAt).toISOString().slice(0, 10)}.`, '');
-  out.push('Only titles and text boxes are included. Handwriting, shapes, highlighter and pictures cannot be written as Markdown; use the JSON backup or a PDF export to keep those.', '');
+export function notesToMarkdown(sections, { exportedAt, heading = true, firstPage = 1 } = {}) {
+  const out = [];
+  if (heading) {
+    out.push('# Flash Notes export', '');
+    if (exportedAt) out.push(`Exported ${new Date(exportedAt).toISOString().slice(0, 10)}.`, '');
+    out.push('Only titles and text boxes are included. Handwriting, shapes, highlighter and pictures cannot be written as Markdown; use the JSON backup or a PDF export to keep those.', '');
+  }
   if (!sections || !sections.length) out.push('_No notebooks yet._', '');
   for (const { doc, pages } of sections || []) {
     const kind = doc && doc.kind === 'whiteboard' ? 'Whiteboard' : 'Notebook';
@@ -42,7 +46,7 @@ export function notesToMarkdown(sections, { exportedAt } = {}) {
         .sort((a, b) => (Number(a.y) || 0) - (Number(b.y) || 0) || (Number(a.x) || 0) - (Number(b.x) || 0));
       const strokes = items.filter(it => it && it.type === 'stroke').length;
       const images = items.filter(it => it && it.type === 'image').length;
-      if (kind === 'Notebook') out.push(`### Page ${i + 1}`, '');
+      if (kind === 'Notebook') out.push(`### Page ${i + firstPage}`, '');
       for (const t of texts) out.push(mdBlock(t.text), '');
       const skipped = [];
       if (strokes) skipped.push(plural(strokes, 'handwriting stroke', 'handwriting strokes'));

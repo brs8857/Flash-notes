@@ -1,11 +1,11 @@
 // Settings sheet.
-import { h, formatBytes, isIOS, isStandalone, filePicker, plural } from './dom.js';
+import { h, formatBytes, isIOS, isStandalone } from './dom.js';
 import { icon } from './icons.js';
-import { openSheet, alertDialog } from './sheet.js';
+import { openSheet } from './sheet.js';
 import { toast } from './toast.js';
-import { exportBackup } from './export.js';
 import * as store from '../store.js';
 import { accountSection } from './account.js';
+import { backupSection } from './backup.js';
 import { authConfigured } from '../auth/auth.js';
 
 function toggle(checked, label, onChange) {
@@ -75,32 +75,6 @@ export function openSettings(app, { onDataChanged } = {}) {
     else toast(isIOS() && !isStandalone() ? 'Add Flash Notes to your Home Screen to protect your notes' : 'The browser didn’t allow it yet. Keep using the app and try again, and keep a backup.', { icon: 'info', duration: 4500 });
   }
 
-  // Backup / restore
-  const picker = filePicker('.json,application/json');
-  function restore() {
-    picker.pick(async file => {
-      const mode = await alertDialog({
-        title: 'Restore backup',
-        message: `“${file.name}”\n\nMerge adds the backup to what’s already here. Replace deletes everything on this device first.`,
-        buttons: [
-          { label: 'Merge with my notes', value: 'merge', style: 'primary' },
-          { label: 'Replace everything', value: 'replace', style: 'danger' },
-          { label: 'Cancel', value: null, style: 'cancel' },
-        ],
-      });
-      if (!mode) return;
-      try {
-        const r = await store.importAll(file, { mode });
-        toast(r.docs ? `Restored ${plural(r.docs, 'item')} (${plural(r.pages, 'page')})` : 'Everything in that backup is already here', { icon: 'check' });
-        refreshStorage();
-        if (onDataChanged) onDataChanged();
-        else if (mode === 'replace') app.back();   // opened from an editor whose notebook may no longer exist
-      } catch (err) {
-        toast(err.message || 'Could not restore that file', { icon: 'info', duration: 4500 });
-      }
-    });
-  }
-
   const showA2hs = isIOS() && !isStandalone();
   const a2hs = showA2hs ? group('Install', 'Safari can delete website data from ordinary tabs after 7 days without use. Apps added to the Home Screen are exempt, work offline and open full screen.',
     h('div', { class: 'row row--tall' },
@@ -113,6 +87,7 @@ export function openSettings(app, { onDataChanged } = {}) {
   let sheet = null;
   const acct = accountSection(app, { row, group, closeSheet: () => sheet && sheet.close(), onDataChanged });
   const cloud = !!acct;
+  const backup = backupSection(app, { row, group, toggle, onDataChanged: onDataChanged ? () => { refreshStorage(); onDataChanged(); } : null, cloud });
 
   const body = h('div', { class: 'settings' },
     acct ? acct.nodes : null,
@@ -130,11 +105,7 @@ export function openSettings(app, { onDataChanged } = {}) {
       ? 'Notes are kept on this device so they open instantly and work offline, and in your private account so they are on your other devices too.'
       : 'Notes never leave this device. There are no accounts and no servers, so the only limit is your device’s free space.',
       usageRow, persistRow),
-    group('Backup', cloud
-      ? 'A backup is one file with every notebook and whiteboard. Restoring adds to your account; “Replace everything” also replaces what is in your account.'
-      : 'A backup is one file with every notebook and whiteboard. Save it to Files or iCloud Drive now and then, especially before clearing Safari data or changing iPad.',
-      row({ iconName: 'download', tint: '#0C8599', title: 'Download backup', sub: 'Save all notes as one .json file', onClick: () => exportBackup() }),
-      row({ iconName: 'upload', tint: '#9C36B5', title: 'Restore from backup', sub: 'Merge or replace with a backup file', onClick: restore })),
+    ...backup.nodes,
     h('section', { class: 'about' },
       h('div', { class: 'about-icon', 'data-squircle': '15' }),
       h('div', { class: 'about-name' }, 'Flash Notes'),
@@ -142,7 +113,7 @@ export function openSettings(app, { onDataChanged } = {}) {
       authConfigured() ? h('a', { class: 'about-link', href: './privacy.html' }, 'Privacy policy') : null,
       h('div', { class: 'about-meta' }, `Version ${app.version} · handwriting powered by perfect-freehand (MIT) · Patrick Hand font (OFL)${authConfigured() ? ' · accounts by Supabase (supabase-js, MIT)' : ''}`)));
 
-  sheet = openSheet({ title: 'Settings', body, size: 'md', doneLabel: 'Done', className: 'sheet--grouped', onClose: () => { picker.destroy(); if (acct) acct.destroy(); } });
+  sheet = openSheet({ title: 'Settings', body, size: 'md', doneLabel: 'Done', className: 'sheet--grouped', onClose: () => { backup.destroy(); if (acct) acct.destroy(); } });
   refreshStorage();
   return sheet;
 }

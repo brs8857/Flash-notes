@@ -7,6 +7,7 @@ import { startSync, stopSync, syncNow, getRemote } from './sync/sync.js';
 import { signOut, currentUser } from './auth/auth.js';
 import { notesToMarkdown } from './export-md.js';
 import { maskEmail, log } from './log.js';
+import { forget as forgetBackups } from './backup/auto.js';
 
 let entered = null;      // the user id sync is running for
 
@@ -54,12 +55,14 @@ export async function signOutEverywhereHere({ trySync = true, force = false } = 
     if (waiting > 0) { const e = new Error('unsynced'); e.code = 'unsynced'; e.count = waiting; throw e; }
   }
   left();
+  forgetBackups();                     // first: a backup in flight must not be saved after the wipe, nor a waiting file kept
   await signOut();
-  await local.wipeUserData();
+  await local.wipeUserData();          // also removes backup snapshots, their state and the folder handle (all in `meta`)
+  forgetBackups();                     // …and again: a run that started in between must not write either
 }
 
 async function wipeDevice() {
-  // IndexedDB: the whole database (notes, thumbnails, queue, saved copy, settings).
+  // IndexedDB: the whole database (notes, thumbnails, queue, saved copy, backup snapshots, settings).
   await store.closeDB();
   await new Promise(resolve => {
     let req;
@@ -84,7 +87,8 @@ export async function deleteAccount() {
   await remote.deleteAccount();          // Edge Function: verifies the token, deletes with the service role
   left();
   await signOut();
-  await wipeDevice();
+  forgetBackups();
+  await wipeDevice();                  // the whole database: notes, snapshots, folder handle
 }
 
 /** Every notebook and whiteboard as one Markdown text (titles and text boxes only). */

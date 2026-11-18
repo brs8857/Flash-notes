@@ -169,9 +169,9 @@ ok(mask('x'.repeat(5000)).length <= 300, 'log lines are capped');
   const sw = read('sw.js');
   const pre = [...sw.matchAll(/'\.\/([^']+)'/g)].map(m => m[1]);
   ok(pre.every(f => fs.existsSync(path.join(root, f))), 'every file the service worker precaches exists');
-  const need = [...walk('js/auth'), ...walk('js/sync'), 'js/account.js', 'js/config.js', 'js/log.js', 'js/export-md.js', 'js/theme-boot.js', 'js/ui/login.js', 'js/ui/account.js', 'vendor/supabase-js.js', 'privacy.html', 'css/legal.css', 'icons/google-g.svg'];
+  const need = [...walk('js/auth'), ...walk('js/sync'), 'js/account.js', 'js/config.js', 'js/log.js', 'js/export-md.js', 'js/theme-boot.js', 'js/ui/login.js', 'js/ui/account.js', ...walk('js/backup'), 'js/ui/backup.js', 'vendor/supabase-js.js', 'privacy.html', 'css/legal.css', 'icons/google-g.svg'];
   eq(need.filter(f => !pre.includes(f)), [], 'every new file is precached (the app still starts offline)');
-  ok(/const VERSION = 'v6'/.test(sw), 'the service worker version was bumped');
+  ok(/const VERSION = 'v7'/.test(sw), 'the service worker version was bumped');
 }
 
 done('auth');

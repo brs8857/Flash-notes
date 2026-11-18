@@ -12,8 +12,10 @@ import { mountLogin } from './ui/login.js';
 import { alertDialog } from './ui/sheet.js';
 import { onRemoteData } from './sync/sync.js';
 import * as account from './account.js';
+import { startAutoBackup } from './backup/auto.js';
+import { mountBackupBanner } from './ui/backup.js';
 
-const VERSION = '2.0';
+const VERSION = '2.1';
 const root = document.getElementById('app');
 const settingsListeners = new Set();
 let current = null;           // the mounted view: {name, leave(), ...}
@@ -269,6 +271,14 @@ async function boot() {
   await route();
   await wait(0);
   registerServiceWorker();
+  // Automatic backup (v2.1): only while the app is open, and never on the login screen.
+  mountBackupBanner();
+  startAutoBackup({
+    getSettings: () => app.settings,
+    canRun: () => !authConfigured() || (!!currentUser() && !!current && current.name !== 'login'),
+    appVersion: VERSION,
+    applySettings: patch => app.updateSettings(patch),
+  });
   if (authConfigured()) idle(() => { watchSession(); }, 3000);   // supabase-js loads after the app is on screen
 }
 

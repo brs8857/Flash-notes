@@ -437,19 +437,33 @@ export async function saveSettings(partial) {
 
 // ---------------------------------------------------------------- backup / restore
 
-/** JSON backup built as many small Blob parts (never one giant JSON.stringify). */
-export async function exportAll() {
+/**
+ * JSON backup built as many small Blob parts (never one giant JSON.stringify). This is the one serialisation
+ * of the library: Settings → Download backup uses it as is, and the .flashnotes file (js/backup/format.js)
+ * reuses it as its library.json with three hooks:
+ *   mapDoc(doc) / mapPage(page) → the record to write (may be async; e.g. pictures swapped for references)
+ *   pause() → awaited between pages, so a big library never blocks drawing
+ *   extra → more top-level fields (written before "docs")
+ */
+export async function exportAll({ mapDoc, mapPage, pause, extra } = {}) {
   const docs = await listDocs();
   const parts = [];
   const push = s => parts.push(new Blob([s]));
-  push(`{"app":"flash-notes","version":1,"exportedAt":${now()},"docs":[`);
-  docs.forEach((d, i) => push((i ? ',' : '') + JSON.stringify(d)));
+  let head = `{"app":"flash-notes","version":1,"exportedAt":${now()}`;
+  for (const [k, v] of Object.entries(extra || {})) head += `,${JSON.stringify(k)}:${JSON.stringify(v)}`;
+  push(head + ',"docs":[');
+  for (let i = 0; i < docs.length; i++) {
+    const d = mapDoc ? await mapDoc(docs[i]) : docs[i];
+    push((i ? ',' : '') + JSON.stringify(d));
+  }
   push('],"pages":[');
   let first = true;
   for (const d of docs) {
     for (const pid of d.pageIds || []) {
-      const p = await getPage(pid);
+      if (pause) await pause();
+      let p = await getPage(pid);
       if (!p) continue;
+      if (mapPage) p = await mapPage(p);
       push((first ? '' : ',') + JSON.stringify(p));
       first = false;
     }
@@ -467,9 +481,22 @@ function validDoc(d) {
  * id already exists is skipped when it is the same version, otherwise imported as a renamed copy.
  * Returns {docs, pages, skipped}.
  */
-export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
+export async function importAll(fileOrBlob, opts = {}) {
   let data;
   try { data = JSON.parse(await fileOrBlob.text()); } catch { throw new Error('That file is not a Flash Notes backup.'); }
+  return importData(data, opts);
+}
+
+const DATA_IMG = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/;
+/** Backups are untrusted input: pictures only as data: images (never http(s), javascript:, svg…). */
+function cleanImported(page) {
+  page.items = (Array.isArray(page.items) ? page.items : []).filter(it => it && typeof it === 'object' && typeof it.type === 'string'
+    && (it.type !== 'image' || (typeof it.src === 'string' && DATA_IMG.test(it.src))));
+  return page;
+}
+
+/** importAll() for an already-parsed backup object (the legacy JSON, or library.json of a .flashnotes). */
+export async function importData(data, { mode = 'merge' } = {}) {
   if (!data || data.app !== 'flash-notes' || !Array.isArray(data.docs) || !Array.isArray(data.pages)) {
     throw new Error('That file is not a Flash Notes backup.');
   }
@@ -494,6 +521,7 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
   }
 
   const existing = new Map((await listDocs()).map(d => [d.id, d]));
+  const usedPages = new Set();          // page ids written by this import: a file must not make two pages share one id
   const result = { docs: 0, pages: 0, skipped: 0 };
 
   for (const raw of data.docs) {
@@ -508,6 +536,7 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
       doc.title = `${doc.title || 'Untitled'} (restored)`;
     }
     doc.title = String(doc.title || 'Untitled');
+    if (doc.cover && typeof doc.cover === 'object' && doc.cover.image != null && !(typeof doc.cover.image === 'string' && DATA_IMG.test(doc.cover.image))) doc.cover.image = null;
     doc.createdAt = doc.createdAt || now();
     doc.updatedAt = doc.updatedAt || now();
     const srcIds = doc.pageIds.filter(id => pagesById.has(id));
@@ -517,7 +546,9 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
       const src = pagesById.get(pid);
       const page = remap ? copyPage(src, doc.id) : { ...src, docId: doc.id };
       if (remap) { page.createdAt = src.createdAt || page.createdAt; page.updatedAt = src.updatedAt || page.updatedAt; }
-      if (!Array.isArray(page.items)) page.items = [];
+      cleanImported(page);
+      if (usedPages.has(page.id) || (!remap && mode !== 'replace' && await getPage(page.id))) page.id = newId();   // never overwrite another notebook's page
+      usedPages.add(page.id);
       if (!page.paper) page.paper = { style: 'blank', color: 'white' };
       await run(['pages', 'meta'], 'readwrite', t => { t.objectStore('pages').put(page); mark(t, 'page', page.id); });
       doc.pageIds.push(page.id);
@@ -530,6 +561,7 @@ export async function importAll(fileOrBlob, { mode = 'merge' } = {}) {
     }
     if (doc.kind === 'whiteboard') doc.pageIds = doc.pageIds.slice(0, 1);
     await putDoc(doc);
+    existing.set(doc.id, doc);
     result.docs++;
   }
   return result;

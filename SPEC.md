@@ -938,3 +938,124 @@ only**; the app has no test switch).
 - **Not done**: live reload of an open page on remote change; Storage cleanup of removed images; syncing
   settings; an age gate; E2EE (see `docs/E2EE.md`).
 
+
+# Auto backup v2.1 — contract (2026-11-18)
+
+Owner's request: a Settings option to export the notes automatically, every hour / 6 hours / day / week /
+month (plus off), "as the best file". Works fully in local-only mode; independent of cloud sync.
+
+## Platform limits (stated in the UI and README)
+A web app cannot run in the background or write files by itself on iPad Safari (no File System Access API, no
+dependable Background/Periodic Sync). So backups are taken **only while the app is open**: 4 s after launch, 1.5 s
+after `visibilitychange → visible`, and on a 60 s timer while visible, whenever one is due. Settings says
+"Runs while Flash Notes is open".
+
+## Files
+| File | Role |
+|---|---|
+| `js/backup/zip.js` | pure ZIP writer/reader: STORE + DEFLATE via `CompressionStream('deflate-raw')` (feature-detected; STORE otherwise), CRC-32 in slices, hostile-input checks |
+| `js/backup/sha256.js` | SHA-256: `crypto.subtle` ≤ 1 MB, sliced pure JS above (subtle copies its input on the main thread in one go) |
+| `js/backup/format.js` | `.flashnotes` build (`buildBackup`) and strict read (`readBackup`, also legacy JSON), `libraryFingerprint`, `portableSettings` |
+| `js/backup/schedule.js` | pure rules: `INTERVALS`, `isDue`, `nextDueAt`, `shouldOfferFile`, `backupSettings`, `backupFileName`, `namesToPrune` |
+| `js/backup/snapshots.js` | IndexedDB rows in `meta`: snapshot info/data, state, folder handle |
+| `js/backup/auto.js` | runner: `startAutoBackup`, `check`, `runBackup`, lock, pen-quiet `pause`, destinations, `restore`, `forget` |
+| `js/ui/backup.js` | Settings groups (Automatic backup, Snapshots on this device, Backup file) + the banner |
+
+## Settings (in the existing `settings` row; device-only, never in a backup)
+`autoBackup` (bool, default false) · `backupInterval` `'1h'|'6h'|'1d'|'1w'|'1m'` (default `'1d'`; 1m = 30 days) ·
+`backupKeep` 3|5|10|20 (default 5) · `backupDest` `'app'|'folder'|'file'` (default `'app'`). Unknown values fall back
+to defaults (`backupSettings`).
+
+## Storage (no database upgrade)
+Everything lives in the existing `meta` store, so `flash-notes` stays at version 1 and a v2.0 database opens
+unchanged (tested by building a v2.0 database with the raw API and opening it with v2.1):
+`autobk:i:<id>` `{id, createdAt, size, counts, fingerprint, librarySha, reason:'auto'|'manual'|'safety', format}`,
+`autobk:d:<id>` `{blob}` (or `{bytes}` if the browser refuses Blobs), `autobk:state` `{lastRunAt, lastSnapshotAt,
+lastResult, error:{code,at}, retryAt, lastFileAt, lastFileFingerprint, snoozeUntil, lastFolderAt,
+lastFolderFingerprint, folderError}`, `autobk:dir` `{handle, name}`. Info and data are separate rows so listing never
+loads the files. Snapshot write + rotation happen in one transaction.
+**Sign-out** (`local.wipeUserData`, keeps only `settings`) and **account deletion** (`deleteDatabase`) therefore
+remove snapshots, state and the folder handle; `account.js` also calls `auto.forget()` (drops a file waiting in
+memory and invalidates a run in progress via an epoch counter, so a backup built before sign-out is never written
+after it).
+
+## Scheduling
+- Due ⇔ `now − lastRunAt ≥ interval`, or `lastRunAt` more than 5 min in the future (clock moved back → one run),
+  or a failed run's `retryAt` (≤ 1 h) has passed. A run always records `lastRunAt`, so opening the app after a
+  long gap makes exactly one backup.
+- One run at a time: a module-level promise (callers share it) + `navigator.locks` `ifAvailable` across tabs
+  (`{result:'busy'}` when another tab holds it).
+- Unchanged data: `libraryFingerprint` = SHA-256 of all doc records (their `updatedAt` moves with every page
+  save, page-list change, title and cover) + portable settings. Same as the newest snapshot → no build, state
+  `lastResult:'unchanged'`. If the fingerprint changed but the built `library.json` hash equals the newest
+  snapshot's, the snapshot's fingerprint is updated and nothing new is stored.
+- Never blocks drawing: work is sliced (`pause()` yields a macrotask when 8 ms have passed — `scheduler.yield`
+  where available — and then waits while a pointer is down or within 1.2 s of one). CRC-32, SHA-256 and the
+  (de)compressor input are fed in 128–256 KB slices with real yields (awaiting promises alone is a microtask and
+  never lets a frame through).
+
+## Destinations (feature-detected, never UA-sniffed)
+Every backup is an in-app snapshot. `backupDest` adds a copy outside the browser:
+- `'file'`: when `shouldOfferFile` (newer than the last saved file, interval since that save, not snoozed — a
+  snooze more than a day ahead is ignored), a non-modal banner "Backup ready · Save / Later". **Save** calls
+  `navigator.share({files})` synchronously from the tap when `canShare` accepts the file (tries
+  `application/octet-stream`, then `application/zip`), else an `<a download>`. Never automatic. Later = snooze
+  24 h. Cancelled share = still owed.
+- `'folder'`: only shown when `window.showDirectoryPicker` exists. Picked once from a tap; handle stored in
+  `autobk:dir`. Each run: `queryPermission` → granted: write `flash-notes-backup-YYYY-MM-DD-HHmm.flashnotes`,
+  then delete only files matching that pattern beyond `backupKeep`; otherwise a one-tap "Allow" banner
+  (`requestPermission` with the in-memory handle, no await before it). Errors: `permission`, `missing`,
+  `disk-full`, `failed`, shown in the status row.
+
+## File format `.flashnotes` (format 1)
+ZIP, UTF-8 names, no ZIP64/encryption. `manifest.json` `{app:'flash-notes', kind:'backup', format:1, minReader:1,
+createdAt, createdAtISO, appVersion, libraryVersion:1, counts:{notebooks, whiteboards, pages, images}, fingerprint,
+contents, entries:{<name>:{size, sha256}}}`; `library.json` = `store.exportAll()` output (same model as the legacy
+JSON; `settings` = portable settings) with every `data:image/(png|jpeg|webp|gif)` in page items and covers replaced
+by `fln-img:<sha256>.<ext>`; `images/<sha256>.<ext>` raw bytes, stored (not deflated); `markdown/<Notebook>/Page
+NNN.md` (whiteboards `Whiteboard.md`) via `notesToMarkdown(…, {heading:false, firstPage})`, never read back.
+Readers refuse `minReader > FORMAT`. Mime used for files: `application/octet-stream`.
+
+## Reading (untrusted input)
+Limits: file 512 MB, 50,000 entries, 256 MB per entry, 1 GB total, ratio 200:1 for entries over 1 MB.
+Rejected: no end record / truncated / multi-disk / ZIP64 / encrypted / methods other than 0/8 / unsafe names
+(absolute, `..`, `.`, backslash, `:`, control characters, trailing spaces) / duplicate names / local header
+disagreeing with the central directory / overlapping entries / inflating past the declared size (checked while
+streaming) / CRC mismatch / missing manifest / manifest size or SHA-256 mismatch / picture name ≠ its own hash /
+reference to a missing picture / library of the wrong shape. Then `store.importData` additionally drops picture
+items and covers that are not `data:image/…` (also for legacy JSON).
+
+## Restore
+`auto.restore(file | {snapshotId}, {mode})`: the file is read and fully checked first. `'merge'` = **Add
+alongside** (existing `importAll` merge semantics: same id + same `updatedAt` is skipped, a changed one is added as
+"… (restored)"; nothing is overwritten). `'replace'`: the UI confirms twice, then a **safety snapshot**
+(`reason:'safety'`) is made; if that fails nothing is replaced. Replace also applies the backup's portable
+settings (small plain values only; never the device's backup setup). In account mode replace tombstones as before.
+
+## Privacy / security
+Backups contain note data and pen/app settings only: no tokens, session, Supabase config or account details
+(none of those are in the `docs`/`pages` stores; `portableSettings` drops device-only keys). Nothing is logged. All
+user strings in the UI are text nodes. CSP unchanged: blob downloads and Web Share need no new directive
+(verified: no `securitypolicyviolation` in `tests/e2e/backup.e2e.mjs`).
+
+## v2.1 builder notes (2026-11-18)
+- `js/store.js`: `exportAll({mapDoc, mapPage, pause, extra})` (no options = byte-identical output to v2.0 apart
+  from timing); `importAll` now parses and calls the new `importData(data, opts)`; imported pictures/covers must be
+  `data:image/…`. Database name/version unchanged.
+- `js/export-md.js`: `notesToMarkdown(sections, {heading, firstPage})` (defaults unchanged).
+- `js/account.js`: calls `auto.forget()` on sign-out and account deletion. `js/app.js`: version `'2.1'`,
+  `startAutoBackup` + `mountBackupBanner` after the first route. Settings: the old "Download backup (.json) /
+  Restore from backup" rows became the Backup groups; Settings → Account → "Download my notes" still gives JSON.
+- `js/canvas/*` untouched. `sw.js` `'v7'`, 7 new precache entries.
+- Deviation from the brief: snapshots live in `meta` rather than a new object store — no `onupgradeneeded`
+  change is needed, open tabs on v2.0 code keep working during the update, and the existing sign-out/delete wipes
+  cover them for free.
+- Deviation: every backup is always kept as an in-app snapshot; "Folder" and "Save a file" add a copy outside
+  the browser (so restore-from-snapshot always works). "Add alongside" reuses the existing merge semantics
+  (identical notebooks are not duplicated).
+- Headless Chrome crashes when reading an origin-private-file-system directory handle back from IndexedDB, so the
+  e2e test keeps the folder handle in memory after picking (auto.js caches it per session anyway); storing and
+  re-reading a real disk handle after a reload is not tested here.
+- Not verifiable here: the iPad share sheet / Files / iCloud Drive, `showDirectoryPicker` on a real disk, iOS
+  suspending or killing the app mid-backup, Safari's Blob-in-IndexedDB behaviour, `DecompressionStream` on iOS < 16.4
+  (such devices cannot open a compressed backup; they get a clear message).
